@@ -17,6 +17,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -151,7 +152,7 @@ class CustomerControllerIntegrationTest {
         String json = mockMvc.perform(post("/api/customers").contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(keycloakUserId, email)))
                 .andExpect(status().isCreated())
-                .andExpect(header().exists("Location"))
+                .andExpect(header().string("Location", startsWith("/api/customers/")))
                 .andReturn().getResponse().getContentAsString();
         JsonNode node = objectMapper.readTree(json);
         return node.get("id").asText();

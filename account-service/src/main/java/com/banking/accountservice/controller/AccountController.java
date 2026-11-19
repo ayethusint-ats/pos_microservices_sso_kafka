@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.List;
@@ -38,8 +38,9 @@ public class AccountController {
     @PostMapping
     public ResponseEntity<AccountResponse> open(@Valid @RequestBody CreateAccountRequest request) {
         AccountResponse created = accountService.open(request);
-        URI location = ServletUriComponentsBuilder.fromCurrentRequest()
-                .path("/{id}").buildAndExpand(created.id()).toUri();
+        // Relative on purpose: behind the gateway an absolute URL built from THIS request would
+        // point at the internal service address. The client resolves it against the URL it called.
+        URI location = UriComponentsBuilder.fromPath("/api/accounts/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
     }
 

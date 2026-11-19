@@ -1,0 +1,44 @@
+### Phase 6: everything goes through the API Gateway on :8080.
+### Token:  ./infrastructure/keycloak/pkce-login.sh alice 2>/dev/null   (ada for ADMIN)
+
+@gw = http://localhost:8080
+@token = paste-access-token-here
+@adminToken = paste-ada-access-token-here
+
+### Routed to user-service
+GET {{gw}}/api/whoami
+Authorization: Bearer {{token}}
+
+### Routed to account-service. Location in the response is relative (/api/accounts/{id}).
+POST {{gw}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "ownerId": "7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c", "type": "SAVINGS", "currency": "THB" }
+
+### Your own correlation ID is kept if it is safe ([A-Za-z0-9-]{8,64})
+GET {{gw}}/api/accounts?ownerId=7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c
+Authorization: Bearer {{token}}
+X-Request-Id: my-debug-session-001
+
+### No token: rejected at the edge, never reaches a service
+GET {{gw}}/api/accounts
+
+### CORS preflight as the browser sends it for Angular (expect 200 + Access-Control-Allow-*)
+OPTIONS {{gw}}/api/accounts
+Origin: http://localhost:4200
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: authorization,content-type
+
+### CORS preflight from an unknown site (expect 403)
+OPTIONS {{gw}}/api/accounts
+Origin: https://evil.example
+Access-Control-Request-Method: POST
+
+### Live routing table (ADMIN only)
+GET {{gw}}/actuator/gateway/routes
+Authorization: Bearer {{adminToken}}
+
+### Not under /api: denied by the allow-list
+GET {{gw}}/internal/anything
+Authorization: Bearer {{token}}

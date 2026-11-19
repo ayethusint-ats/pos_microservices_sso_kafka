@@ -11,6 +11,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 3 | PostgreSQL and database-per-service | [documentation/03-postgresql-database-per-service.md](documentation/03-postgresql-database-per-service.md) |
 | 4 | Keycloak and centralized authentication | [documentation/04-keycloak-centralized-authentication.md](documentation/04-keycloak-centralized-authentication.md) |
 | 5 | Spring Security and JWT validation | [documentation/05-spring-security-jwt-validation.md](documentation/05-spring-security-jwt-validation.md) |
+| 6 | Spring Cloud Gateway | [documentation/06-spring-cloud-gateway.md](documentation/06-spring-cloud-gateway.md) |
 
 ## Layout
 
@@ -20,7 +21,7 @@ banking-platform/
 ├── docker-compose.yml       # Local infrastructure (PostgreSQL now; more each phase)
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
 ├── frontend/                # Angular SPA (Phase 7)
-├── api-gateway/             # Spring Cloud Gateway (Phase 6)
+├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
 ├── account-service/         # Accounts and balances (Phase 2)
 ├── payment-service/         # Transfers, Saga, idempotency (Phases 9–13)
@@ -46,8 +47,9 @@ banking-platform/
 cp .env.example .env                    # first time: then set real passwords in .env
 docker compose up -d                    # PostgreSQL :5433, Keycloak :8180
 TOKEN=$(./infrastructure/keycloak/pkce-login.sh alice 2>/dev/null)   # log in as alice
-curl -s localhost:8081/api/whoami -H "Authorization: Bearer $TOKEN"  # once services run
+curl -s localhost:8080/api/whoami -H "Authorization: Bearer $TOKEN"  # through the gateway
 mvn verify                              # build all services and run tests (needs Docker)
-mvn -pl user-service spring-boot:run    # http://localhost:8081
-mvn -pl account-service spring-boot:run # http://localhost:8082
+mvn -pl user-service spring-boot:run    # :8081
+mvn -pl account-service spring-boot:run # :8082
+mvn -pl api-gateway spring-boot:run     # :8080  ← clients use this one
 ```

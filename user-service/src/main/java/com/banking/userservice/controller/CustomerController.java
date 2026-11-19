@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.UUID;
@@ -40,12 +40,13 @@ public class CustomerController {
         this.customerService = customerService;
     }
 
-    /** 201 Created plus a Location header pointing to the new resource. */
+    /** 201 Created plus a (relative) Location header pointing to the new resource. */
     @PostMapping
     public ResponseEntity<CustomerResponse> create(@Valid @RequestBody CreateCustomerRequest request) {
         CustomerResponse created = customerService.create(request);
-        URI location = ServletUriComponentsBuilder.fromCurrentRequest()
-                .path("/{id}").buildAndExpand(created.id()).toUri();
+        // Relative on purpose: behind the gateway an absolute URL built from THIS request would
+        // point at the internal service address. The client resolves it against the URL it called.
+        URI location = UriComponentsBuilder.fromPath("/api/customers/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
     }
 

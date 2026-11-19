@@ -1,0 +1,64 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      server:
+        webflux:   # Spring Cloud 2025.0 prefix (the old "spring.cloud.gateway.*" names are deprecated)
+
+          # How the gateway talks to services. Without timeouts, one hung service would tie up
+          # gateway connections until clients give up.
+          httpclient:
+            connect-timeout: 2000      # ms to open a TCP connection. Failure → 502 Bad Gateway
+            response-timeout: 5s       # max wait for the response. Failure → 504 Gateway Timeout
+
+          # Applied to every route below.
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@userOrIpKeyResolver}"     # who is being limited
+                rate-limiter: "#{@inMemoryRateLimiter}"     # how (token bucket)
+
+          # Routing table: first matching predicate wins. Paths are forwarded unchanged.
+          # URIs are plain host names: service discovery is DNS (localhost now,
+          # Docker service names in Phase 15, Kubernetes Services in Phase 16).
+          routes:
+            - id: user-service
+              uri: ${USER_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/customers/**,/api/whoami
+            - id: account-service
+              uri: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/accounts/**
+            # Phase 9+: payment-service, transaction-service
+
+banking:
+  security:
+    jwt:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
+      jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/banking/protocol/openid-connect/certs}
+      audience: banking-api
+  gateway:
+    cors:
+      # Only these browser origins may call the API from JavaScript.
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
+    rate-limit:
+      replenish-rate: 10     # tokens added per second, per user (sustained rate)
+      burst-capacity: 20     # bucket size: short bursts above the sustained rate
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway    # /actuator/gateway/routes shows the live routing table
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN
+    gateway:
+      access: read-only
