@@ -1,7 +1,10 @@
 import { Routes } from '@angular/router';
 import { authGuard, roleGuard } from './auth/auth.guards';
 
-/** Pages are lazy-loaded: their code is downloaded only when the route is first visited. */
+/**
+ * Pages are lazy-loaded. Guards only shape the UI; the backend enforces the same rules
+ * independently (see documentation/08-role-based-authorization.md).
+ */
 export const routes: Routes = [
   {
     path: '',
@@ -9,22 +12,28 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/home/home.page').then((m) => m.HomePage),
   },
   {
+    path: 'profile',
+    title: 'My profile',
+    canActivate: [authGuard, roleGuard('CUSTOMER')],
+    loadComponent: () => import('./pages/profile/profile.page').then((m) => m.ProfilePage),
+  },
+  {
     path: 'accounts',
     title: 'My accounts',
-    canActivate: [authGuard],
+    canActivate: [authGuard, roleGuard('CUSTOMER')],
     loadComponent: () => import('./pages/accounts/accounts.page').then((m) => m.AccountsPage),
+  },
+  {
+    path: 'backoffice',
+    title: 'Back office',
+    canActivate: [authGuard, roleGuard('SUPPORT', 'ADMIN')],
+    loadComponent: () => import('./pages/backoffice/backoffice.page').then((m) => m.BackofficePage),
   },
   {
     path: 'token',
     title: 'Token inspector',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/token/token.page').then((m) => m.TokenPage),
-  },
-  {
-    path: 'admin',
-    title: 'Administration',
-    canActivate: [authGuard, roleGuard('ADMIN')],
-    loadComponent: () => import('./pages/admin/admin.page').then((m) => m.AdminPage),
   },
   {
     path: 'forbidden',

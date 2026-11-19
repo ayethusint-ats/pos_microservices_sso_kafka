@@ -13,6 +13,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 5 | Spring Security and JWT validation | [documentation/05-spring-security-jwt-validation.md](documentation/05-spring-security-jwt-validation.md) |
 | 6 | Spring Cloud Gateway | [documentation/06-spring-cloud-gateway.md](documentation/06-spring-cloud-gateway.md) |
 | 7 | Angular login, logout and token management | [documentation/07-angular-authentication.md](documentation/07-angular-authentication.md) |
+| 8 | Role-based authorization and ownership | [documentation/08-role-based-authorization.md](documentation/08-role-based-authorization.md) |
 
 ## Layout
 

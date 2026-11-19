@@ -57,6 +57,9 @@ public class GatewaySecurityConfig {
                         .pathMatchers(HttpMethod.OPTIONS, "/api/**").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         .pathMatchers("/actuator/**").hasRole("ADMIN")
+                        // Same coarse rule as in the services: the back office is staff-only.
+                        // Fine-grained rules (SUPPORT read vs ADMIN write, ownership) stay in the services.
+                        .pathMatchers("/api/admin/**").hasAnyRole("SUPPORT", "ADMIN")
                         .pathMatchers("/api/**").authenticated()
                         // Allow-list: anything not explicitly exposed is refused.
                         .anyExchange().denyAll())

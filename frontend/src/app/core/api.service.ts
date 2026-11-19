@@ -13,7 +13,38 @@ export interface WhoAmI {
   expiresAt: string;
 }
 
+export interface Address {
+  street: string;
+  city: string;
+  postalCode: string;
+  country: string;
+}
+
+export interface CustomerProfile {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phoneNumber: string | null;
+  address: Address;
+}
+
+export interface Customer extends CustomerProfile {
+  id: string;
+  keycloakUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Page<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
 export type AccountType = 'CHECKING' | 'SAVINGS';
+export type AccountStatus = 'ACTIVE' | 'FROZEN' | 'CLOSED';
 
 export interface Account {
   id: string;
@@ -22,13 +53,16 @@ export interface Account {
   type: AccountType;
   currency: string;
   balance: number;
-  status: 'ACTIVE' | 'FROZEN' | 'CLOSED';
+  status: AccountStatus;
   createdAt: string;
 }
 
 /**
- * All calls go to the API Gateway. Angular never talks to a service directly.
- * The token is added by authTokenInterceptor; errors are normalized by apiErrorInterceptor.
+ * All calls go to the API Gateway. The token is added by authTokenInterceptor, errors are
+ * normalized by apiErrorInterceptor.
+ *
+ * Notice what is NOT here since Phase 8: no ownerId on self-service calls. The server knows who
+ * the caller is from the token, so the client can't ask for someone else's data.
  */
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -39,12 +73,50 @@ export class ApiService {
     return this.http.get<WhoAmI>(`${this.base}/api/whoami`);
   }
 
-  /** Phase 7: ownerId is still sent by the client. Phase 8 takes it from the token on the server. */
-  accountsOf(ownerId: string): Observable<Account[]> {
-    return this.http.get<Account[]>(`${this.base}/api/accounts`, { params: { ownerId } });
+  // ------------------------------------------------------------ customer self-service
+
+  myProfile(): Observable<Customer> {
+    return this.http.get<Customer>(`${this.base}/api/customers/me`);
   }
 
-  openAccount(ownerId: string, type: AccountType, currency: string): Observable<Account> {
-    return this.http.post<Account>(`${this.base}/api/accounts`, { ownerId, type, currency });
+  createMyProfile(profile: CustomerProfile): Observable<Customer> {
+    return this.http.post<Customer>(`${this.base}/api/customers/me`, profile);
+  }
+
+  updateMyProfile(profile: CustomerProfile): Observable<Customer> {
+    return this.http.put<Customer>(`${this.base}/api/customers/me`, profile);
+  }
+
+  myAccounts(): Observable<Account[]> {
+    return this.http.get<Account[]>(`${this.base}/api/accounts`);
+  }
+
+  openAccount(type: AccountType, currency: string): Observable<Account> {
+    return this.http.post<Account>(`${this.base}/api/accounts`, { type, currency });
+  }
+
+  deposit(accountId: string, amount: number): Observable<Account> {
+    return this.http.post<Account>(`${this.base}/api/accounts/${accountId}/deposit`, { amount });
+  }
+
+  withdraw(accountId: string, amount: number): Observable<Account> {
+    return this.http.post<Account>(`${this.base}/api/accounts/${accountId}/withdraw`, { amount });
+  }
+
+  // ------------------------------------------------------------ back office (SUPPORT, ADMIN)
+
+  customers(page = 0, size = 20): Observable<Page<Customer>> {
+    return this.http.get<Page<Customer>>(`${this.base}/api/admin/customers`, {
+      params: { page, size, sort: 'lastName,asc' },
+    });
+  }
+
+  accountsOfCustomer(keycloakUserId: string): Observable<Account[]> {
+    return this.http.get<Account[]>(`${this.base}/api/admin/accounts`, { params: { ownerId: keycloakUserId } });
+  }
+
+  /** ADMIN only. SUPPORT gets 403 from the backend even if the UI showed the button. */
+  changeAccountStatus(accountId: string, status: AccountStatus, reason: string): Observable<Account> {
+    return this.http.patch<Account>(`${this.base}/api/admin/accounts/${accountId}/status`, { status, reason });
   }
 }

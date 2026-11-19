@@ -1,0 +1,70 @@
+<h1>Back office</h1>
+<p class="muted">
+  @if (auth.hasRole('ADMIN')) {
+    Administrator: you can view customers and freeze or unfreeze accounts.
+  } @else {
+    Support: read-only access to customer information.
+  }
+  Moving money is not possible here.
+</p>
+
+<app-error-message [error]="error()" />
+
+<div class="card">
+  <h2>Customers</h2>
+  @if (customers().length === 0) {
+    <p class="muted">No customer profiles yet.</p>
+  } @else {
+    <table data-testid="customers-table">
+      <thead>
+        <tr><th>Name</th><th>Email</th><th>City</th><th></th></tr>
+      </thead>
+      <tbody>
+        @for (customer of customers(); track customer.id) {
+          <tr [attr.data-email]="customer.email">
+            <td>{{ customer.firstName }} {{ customer.lastName }}</td>
+            <td>{{ customer.email }}</td>
+            <td>{{ customer.address.city }}</td>
+            <td><button type="button" class="secondary" (click)="select(customer)" data-testid="view-accounts">View accounts</button></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>
+
+@if (selected(); as customer) {
+  <div class="card">
+    <h2>Accounts of {{ customer.firstName }} {{ customer.lastName }}</h2>
+    @if (accounts().length === 0) {
+      <p class="muted">No accounts.</p>
+    } @else {
+      <table data-testid="customer-accounts">
+        <thead>
+          <tr><th>Account number</th><th>Type</th><th>Status</th><th class="num">Balance</th><th></th></tr>
+        </thead>
+        <tbody>
+          @for (account of accounts(); track account.id) {
+            <tr [attr.data-account]="account.accountNumber">
+              <td><code>{{ account.accountNumber }}</code></td>
+              <td>{{ account.type }}</td>
+              <td data-testid="status">{{ account.status }}</td>
+              <td class="num">{{ account.balance | currency: account.currency }}</td>
+              <td>
+                @if (auth.hasRole('ADMIN')) {
+                  @if (account.status === 'ACTIVE') {
+                    <button type="button" class="secondary" [disabled]="busy()"
+                            (click)="setStatus(account, 'FROZEN')" data-testid="freeze">Freeze</button>
+                  } @else if (account.status === 'FROZEN') {
+                    <button type="button" class="secondary" [disabled]="busy()"
+                            (click)="setStatus(account, 'ACTIVE')" data-testid="unfreeze">Unfreeze</button>
+                  }
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}

@@ -48,7 +48,7 @@ class IdentityProviderUnavailableTest {
         when(jwtDecoder.decode(anyString())).thenThrow(new JwtException(
                 "I/O error on GET request for \"http://localhost:8180/.../certs\": Connection refused"));
 
-        mockMvc.perform(get("/api/accounts").param("ownerId", "anyone").header("Authorization", "Bearer some.jwt.token"))
+        mockMvc.perform(get("/api/accounts").header("Authorization", "Bearer some.jwt.token"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(header().string("Retry-After", "10"))
                 .andExpect(jsonPath("$.title").value("Service unavailable"));
@@ -58,7 +58,7 @@ class IdentityProviderUnavailableTest {
     void badTokenStillGives401() throws Exception {
         when(jwtDecoder.decode(anyString())).thenThrow(new BadJwtException("Signed JWT rejected: Invalid signature"));
 
-        mockMvc.perform(get("/api/accounts").param("ownerId", "anyone").header("Authorization", "Bearer some.jwt.token"))
+        mockMvc.perform(get("/api/accounts").header("Authorization", "Bearer some.jwt.token"))
                 .andExpect(status().isUnauthorized());
     }
 }

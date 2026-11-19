@@ -48,7 +48,7 @@ class CustomerServiceTest {
         when(customerRepository.existsByEmail("jane@example.com")).thenReturn(false);
         when(customerRepository.saveAndFlush(any(Customer.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        CustomerResponse response = customerService.create(request("kc-1", "  Jane@Example.COM "));
+        CustomerResponse response = customerService.createOnBehalf(request("kc-1", "  Jane@Example.COM "), "admin-1");
 
         ArgumentCaptor<Customer> saved = ArgumentCaptor.forClass(Customer.class);
         verify(customerRepository).saveAndFlush(saved.capture());
@@ -60,7 +60,7 @@ class CustomerServiceTest {
     void create_rejectsSecondProfileForSameIdentity() {
         when(customerRepository.existsByKeycloakUserId("kc-1")).thenReturn(true);
 
-        assertThatThrownBy(() -> customerService.create(request("kc-1", "jane@example.com")))
+        assertThatThrownBy(() -> customerService.createOnBehalf(request("kc-1", "jane@example.com"), "admin-1"))
                 .isInstanceOf(DuplicateResourceException.class)
                 .hasMessageContaining("kc-1");
         verify(customerRepository, never()).saveAndFlush(any());
@@ -71,7 +71,7 @@ class CustomerServiceTest {
         when(customerRepository.existsByKeycloakUserId("kc-2")).thenReturn(false);
         when(customerRepository.existsByEmail("jane@example.com")).thenReturn(true);
 
-        assertThatThrownBy(() -> customerService.create(request("kc-2", "jane@example.com")))
+        assertThatThrownBy(() -> customerService.createOnBehalf(request("kc-2", "jane@example.com"), "admin-1"))
                 .isInstanceOf(DuplicateResourceException.class);
     }
 

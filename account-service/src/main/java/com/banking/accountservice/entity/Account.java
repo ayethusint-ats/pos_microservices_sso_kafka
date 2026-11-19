@@ -1,6 +1,8 @@
 package com.banking.accountservice.entity;
 
 import com.banking.accountservice.exception.AccountNotActiveException;
+import com.banking.accountservice.exception.AccountNotEmptyException;
+import com.banking.accountservice.exception.InvalidStatusTransitionException;
 import com.banking.accountservice.exception.InsufficientFundsException;
 import com.banking.accountservice.exception.InvalidAmountException;
 import jakarta.persistence.Column;
@@ -105,6 +107,27 @@ public class Account {
             throw new InsufficientFundsException(id, balance, value);
         }
         balance = balance.subtract(value);
+    }
+
+    /**
+     * Account lifecycle, managed by ADMIN:
+     * <pre>
+     *   ACTIVE ⇄ FROZEN        (freeze: e.g. suspected fraud; no money moves while frozen)
+     *   ACTIVE/FROZEN → CLOSED (only with a zero balance; CLOSED is final)
+     * </pre>
+     * Setting the current status again is a no-op (idempotent).
+     */
+    public void changeStatus(AccountStatus target) {
+        if (target == null || target == status) {
+            return;
+        }
+        if (status == AccountStatus.CLOSED) {
+            throw new InvalidStatusTransitionException(id, status, target);
+        }
+        if (target == AccountStatus.CLOSED && balance.signum() != 0) {
+            throw new AccountNotEmptyException(id, balance);
+        }
+        status = target;
     }
 
     private void requireActive() {

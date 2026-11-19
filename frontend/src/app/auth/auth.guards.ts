@@ -18,11 +18,11 @@ export const authGuard: CanActivateFn = (_route, state) => {
   return false;
 };
 
-/** Logged in but without the role → friendly "forbidden" page instead of a broken screen. */
-export function roleGuard(role: Role): CanActivateFn {
+/** Logged in but without any of the roles → friendly "forbidden" page instead of a broken screen. */
+export function roleGuard(...roles: Role[]): CanActivateFn {
   return () => {
     const auth = inject(AuthService);
     const router = inject(Router);
-    return auth.hasRole(role) ? true : router.createUrlTree(['/forbidden']);
+    return roles.some((role) => auth.hasRole(role)) ? true : router.createUrlTree(['/forbidden']);
   };
 }

@@ -2,13 +2,16 @@
   <a class="brand" routerLink="/">Modern Bank</a>
 
   @if (auth.isAuthenticated()) {
+    <!-- Menu items follow the roles as a convenience; the backend enforces every rule. -->
     <nav aria-label="Main">
-      <a routerLink="/accounts" routerLinkActive="active">Accounts</a>
-      <a routerLink="/token" routerLinkActive="active">Token</a>
-      <!-- Hidden for non-admins as a convenience only: the gateway enforces ADMIN. -->
-      @if (auth.hasRole('ADMIN')) {
-        <a routerLink="/admin" routerLinkActive="active">Admin</a>
+      @if (auth.hasRole('CUSTOMER')) {
+        <a routerLink="/accounts" routerLinkActive="active">Accounts</a>
+        <a routerLink="/profile" routerLinkActive="active">Profile</a>
       }
+      @if (auth.isStaff()) {
+        <a routerLink="/backoffice" routerLinkActive="active">Back office</a>
+      }
+      <a routerLink="/token" routerLinkActive="active">Token</a>
     </nav>
   }
 

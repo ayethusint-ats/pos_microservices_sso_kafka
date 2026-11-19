@@ -8,10 +8,9 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
- * Request body for creating a customer profile.
- *
- * <p>Phase 2 only: the client sends {@code keycloakUserId}. From Phase 8 on, the service
- * takes it from the verified JWT ("sub"), so a caller can't create a profile for someone else.
+ * ADMIN onboarding a customer on their behalf (POST /api/admin/customers). This is the only
+ * request where a client may name the identity. Customers creating their own profile use
+ * {@link CustomerProfileRequest}, and their identity comes from the token.
  */
 public record CreateCustomerRequest(
         @NotBlank @Size(max = 36) String keycloakUserId,

@@ -38,6 +38,12 @@ describe('route guards', () => {
     expect(result).toBe(true);
   });
 
+  it('roleGuard accepts any of several roles', () => {
+    setup(true, ['SUPPORT']);
+    const result = TestBed.runInInjectionContext(() => roleGuard('SUPPORT', 'ADMIN')(route, state));
+    expect(result).toBe(true);
+  });
+
   it('roleGuard redirects users without the role to /forbidden', () => {
     setup(true, ['CUSTOMER']);
     const result = TestBed.runInInjectionContext(() => roleGuard('ADMIN')(route, state));

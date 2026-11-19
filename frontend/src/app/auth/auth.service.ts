@@ -69,6 +69,9 @@ export class AuthService {
     return this.roles().includes(role);
   }
 
+  /** Staff = back-office users (SUPPORT or ADMIN). */
+  readonly isStaff = computed(() => this.roles().some((r) => r === 'SUPPORT' || r === 'ADMIN'));
+
   /** Redirects the browser to Keycloak. `returnUrl` is restored after the login callback. */
   login(returnUrl?: string): void {
     if (returnUrl) {

@@ -1,6 +1,9 @@
 package com.banking.accountservice.entity;
 
+import com.banking.accountservice.exception.AccountNotActiveException;
+import com.banking.accountservice.exception.AccountNotEmptyException;
 import com.banking.accountservice.exception.InsufficientFundsException;
+import com.banking.accountservice.exception.InvalidStatusTransitionException;
 import com.banking.accountservice.exception.InvalidAmountException;
 import org.junit.jupiter.api.Test;
 
@@ -48,5 +51,29 @@ class AccountTest {
     void moreThanTwoDecimalPlacesIsRejected() {
         assertThatThrownBy(() -> account.deposit(new BigDecimal("1.001")))
                 .isInstanceOf(InvalidAmountException.class);
+    }
+
+    @Test
+    void frozenAccountRejectsMoneyMovementUntilUnfrozen() {
+        account.deposit(new BigDecimal("50.00"));
+        account.changeStatus(AccountStatus.FROZEN);
+
+        assertThatThrownBy(() -> account.withdraw(BigDecimal.ONE)).isInstanceOf(AccountNotActiveException.class);
+        assertThatThrownBy(() -> account.deposit(BigDecimal.ONE)).isInstanceOf(AccountNotActiveException.class);
+
+        account.changeStatus(AccountStatus.ACTIVE);
+        account.withdraw(BigDecimal.ONE);
+        assertThat(account.getBalance()).isEqualByComparingTo("49.00");
+    }
+
+    @Test
+    void closingRequiresZeroBalanceAndIsFinal() {
+        account.deposit(BigDecimal.TEN);
+        assertThatThrownBy(() -> account.changeStatus(AccountStatus.CLOSED)).isInstanceOf(AccountNotEmptyException.class);
+
+        account.withdraw(BigDecimal.TEN);
+        account.changeStatus(AccountStatus.CLOSED);
+        assertThatThrownBy(() -> account.changeStatus(AccountStatus.ACTIVE))
+                .isInstanceOf(InvalidStatusTransitionException.class);
     }
 }

@@ -1,0 +1,32 @@
+<h1>My profile</h1>
+
+<app-error-message [error]="error()" />
+
+@if (loading()) {
+  <p class="muted">Loading…</p>
+} @else {
+  @if (!existing()) {
+    <p class="muted" data-testid="no-profile">
+      You're signed in, but the bank doesn't have your customer profile yet. Please complete it.
+    </p>
+  }
+  @if (saved()) {
+    <p data-testid="saved">✔ Profile saved.</p>
+  }
+
+  <form class="card profile-form" (ngSubmit)="save()" data-testid="profile-form">
+    <label>First name <input name="firstName" [(ngModel)]="form.firstName" required /></label>
+    <label>Last name <input name="lastName" [(ngModel)]="form.lastName" required /></label>
+    <label>Email <input name="email" type="email" [(ngModel)]="form.email" required data-testid="email" /></label>
+    <label>Phone <input name="phone" [(ngModel)]="form.phoneNumber" placeholder="+66 81 234 5678" /></label>
+    <label>Street <input name="street" [(ngModel)]="form.address.street" required data-testid="street" /></label>
+    <label>City <input name="city" [(ngModel)]="form.address.city" required data-testid="city" /></label>
+    <label>Postal code <input name="postalCode" [(ngModel)]="form.address.postalCode" required data-testid="postal-code" /></label>
+    <label>Country (ISO code) <input name="country" [(ngModel)]="form.address.country" maxlength="2" required /></label>
+    <div>
+      <button type="submit" [disabled]="saving()" data-testid="save-profile">
+        {{ existing() ? 'Save changes' : 'Create profile' }}
+      </button>
+    </div>
+  </form>
+}

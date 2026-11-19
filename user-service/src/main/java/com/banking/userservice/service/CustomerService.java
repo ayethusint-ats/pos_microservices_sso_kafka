@@ -1,14 +1,17 @@
 package com.banking.userservice.service;
 
+import com.banking.userservice.dto.AddressDto;
 import com.banking.userservice.dto.CreateCustomerRequest;
+import com.banking.userservice.dto.CustomerProfileRequest;
 import com.banking.userservice.dto.CustomerResponse;
 import com.banking.userservice.dto.PageResponse;
-import com.banking.userservice.dto.UpdateCustomerRequest;
 import com.banking.userservice.entity.Customer;
 import com.banking.userservice.exception.DuplicateResourceException;
 import com.banking.userservice.exception.ResourceNotFoundException;
 import com.banking.userservice.mapper.CustomerMapper;
 import com.banking.userservice.repository.CustomerRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,59 +20,54 @@ import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Business logic for customer profiles. Controllers stay thin and repositories stay dumb.
- *
- * <p>Class-level {@code @Transactional(readOnly = true)} is the default. Methods that write
- * override it with a plain {@code @Transactional}.
+ * Customer profile use cases. Self-service methods are keyed by the caller's identity
+ * ({@code keycloakUserId} = token {@code sub}). Back-office methods are keyed by profile ID and
+ * record the acting admin in the audit log.
  */
 @Service
 @Transactional(readOnly = true)
 public class CustomerService {
 
+    private static final Logger audit = LoggerFactory.getLogger("AUDIT");
     private static final String RESOURCE = "Customer";
 
     private final CustomerRepository customerRepository;
     private final CustomerMapper customerMapper;
 
-    // Constructor injection: dependencies are explicit, final, and easy to mock in tests.
     public CustomerService(CustomerRepository customerRepository, CustomerMapper customerMapper) {
         this.customerRepository = customerRepository;
         this.customerMapper = customerMapper;
     }
 
+    // ---------------------------------------------------------------- self-service
+
+    /** A customer creates THEIR profile. The identity comes from the token, never from the body. */
     @Transactional
-    public CustomerResponse create(CreateCustomerRequest request) {
-        String email = normalizeEmail(request.email());
+    public CustomerResponse createForIdentity(String keycloakUserId, CustomerProfileRequest profile) {
+        return create(keycloakUserId, profile.firstName(), profile.lastName(), profile.email(),
+                profile.phoneNumber(), profile.address(), keycloakUserId);
+    }
 
-        if (customerRepository.existsByKeycloakUserId(request.keycloakUserId())) {
-            throw new DuplicateResourceException(
-                    "A customer profile already exists for identity '%s'".formatted(request.keycloakUserId()));
-        }
-        if (customerRepository.existsByEmail(email)) {
-            throw new DuplicateResourceException("Email '%s' is already in use".formatted(email));
-        }
+    public CustomerResponse getByKeycloakUserId(String keycloakUserId) {
+        return customerMapper.toResponse(findByIdentityOrThrow(keycloakUserId));
+    }
 
-        Customer customer = new Customer(
-                request.keycloakUserId(),
-                request.firstName().trim(),
-                request.lastName().trim(),
-                email,
-                request.phoneNumber(),
-                customerMapper.toEntity(request.address()));
+    @Transactional
+    public CustomerResponse updateByKeycloakUserId(String keycloakUserId, CustomerProfileRequest profile) {
+        return applyUpdate(findByIdentityOrThrow(keycloakUserId), profile, keycloakUserId);
+    }
 
-        // saveAndFlush sends the INSERT now, so DB constraint errors and generated
-        // timestamps are available here rather than at commit time.
-        return customerMapper.toResponse(customerRepository.saveAndFlush(customer));
+    // ---------------------------------------------------------------- back office
+
+    /** An ADMIN onboards a customer (e.g. after branch KYC) for an existing Keycloak identity. */
+    @Transactional
+    public CustomerResponse createOnBehalf(CreateCustomerRequest request, String actorId) {
+        return create(request.keycloakUserId(), request.firstName(), request.lastName(), request.email(),
+                request.phoneNumber(), request.address(), actorId);
     }
 
     public CustomerResponse getById(UUID id) {
         return customerMapper.toResponse(findOrThrow(id));
-    }
-
-    public CustomerResponse getByKeycloakUserId(String keycloakUserId) {
-        return customerRepository.findByKeycloakUserId(keycloakUserId)
-                .map(customerMapper::toResponse)
-                .orElseThrow(() -> new ResourceNotFoundException(RESOURCE, keycloakUserId));
     }
 
     public PageResponse<CustomerResponse> list(Pageable pageable) {
@@ -77,34 +75,58 @@ public class CustomerService {
     }
 
     @Transactional
-    public CustomerResponse update(UUID id, UpdateCustomerRequest request) {
-        Customer customer = findOrThrow(id);
-        String email = normalizeEmail(request.email());
+    public CustomerResponse update(UUID id, CustomerProfileRequest profile, String actorId) {
+        return applyUpdate(findOrThrow(id), profile, actorId);
+    }
 
-        if (customerRepository.existsByEmailAndIdNot(email, id)) {
-            throw new DuplicateResourceException("Email '%s' is already in use".formatted(email));
+    /** Hard delete keeps the demo simple. Real banks deactivate and retain records (regulation). */
+    @Transactional
+    public void delete(UUID id, String actorId) {
+        Customer customer = findOrThrow(id);
+        customerRepository.delete(customer);
+        audit.info("action=DELETE_CUSTOMER actor={} customer={} identity={}", actorId, id, customer.getKeycloakUserId());
+    }
+
+    // ---------------------------------------------------------------- shared logic
+
+    private CustomerResponse create(String keycloakUserId, String firstName, String lastName, String email,
+                                    String phoneNumber, AddressDto address, String actorId) {
+        String normalizedEmail = normalizeEmail(email);
+        if (customerRepository.existsByKeycloakUserId(keycloakUserId)) {
+            throw new DuplicateResourceException(
+                    "A customer profile already exists for identity '%s'".formatted(keycloakUserId));
+        }
+        if (customerRepository.existsByEmail(normalizedEmail)) {
+            throw new DuplicateResourceException("Email '%s' is already in use".formatted(normalizedEmail));
         }
 
-        // No explicit save() needed: the entity is "managed", so JPA dirty checking
-        // detects the changes and issues an UPDATE on flush.
-        customer.updateProfile(
-                request.firstName().trim(),
-                request.lastName().trim(),
-                email,
-                request.phoneNumber(),
-                customerMapper.toEntity(request.address()));
-        customerRepository.flush();
+        Customer customer = customerRepository.saveAndFlush(new Customer(
+                keycloakUserId, firstName.trim(), lastName.trim(), normalizedEmail, phoneNumber,
+                customerMapper.toEntity(address)));
+        audit.info("action=CREATE_CUSTOMER actor={} customer={} identity={}", actorId, customer.getId(), keycloakUserId);
         return customerMapper.toResponse(customer);
     }
 
-    @Transactional
-    public void delete(UUID id) {
-        customerRepository.delete(findOrThrow(id));
+    private CustomerResponse applyUpdate(Customer customer, CustomerProfileRequest profile, String actorId) {
+        String email = normalizeEmail(profile.email());
+        if (customerRepository.existsByEmailAndIdNot(email, customer.getId())) {
+            throw new DuplicateResourceException("Email '%s' is already in use".formatted(email));
+        }
+        // No save() needed: the entity is managed, so dirty checking issues the UPDATE on flush.
+        customer.updateProfile(profile.firstName().trim(), profile.lastName().trim(), email,
+                profile.phoneNumber(), customerMapper.toEntity(profile.address()));
+        customerRepository.flush();
+        audit.info("action=UPDATE_CUSTOMER actor={} customer={}", actorId, customer.getId());
+        return customerMapper.toResponse(customer);
     }
 
     private Customer findOrThrow(UUID id) {
-        return customerRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException(RESOURCE, id));
+        return customerRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException(RESOURCE, id));
+    }
+
+    private Customer findByIdentityOrThrow(String keycloakUserId) {
+        return customerRepository.findByKeycloakUserId(keycloakUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer profile for identity", keycloakUserId));
     }
 
     private static String normalizeEmail(String email) {

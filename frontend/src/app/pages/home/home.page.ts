@@ -9,7 +9,12 @@ import { AuthService } from '../../auth/auth.service';
     <h1>Welcome to Modern Bank</h1>
     @if (auth.isAuthenticated()) {
       <p data-testid="welcome">Hello <strong>{{ auth.username() }}</strong>, you are signed in.</p>
-      <p><a routerLink="/accounts">Go to your accounts →</a></p>
+      @if (auth.hasRole('CUSTOMER')) {
+        <p><a routerLink="/accounts">Go to your accounts →</a></p>
+      }
+      @if (auth.isStaff()) {
+        <p><a routerLink="/backoffice">Open the back office →</a></p>
+      }
     } @else {
       <div class="card">
         <p>

@@ -11,6 +11,7 @@ describe('App shell', () => {
       username: signal(authenticated ? 'alice' : null),
       roles: signal(roles),
       hasRole: (role: Role) => roles.includes(role),
+      isStaff: signal(roles.includes('SUPPORT') || roles.includes('ADMIN')),
       login: vi.fn(),
       logout: vi.fn(),
       restorePostLoginRedirect: vi.fn(),
@@ -37,10 +38,15 @@ describe('App shell', () => {
     expect(element.querySelector('[data-testid="logout"]')).toBeTruthy();
   });
 
-  it('shows the Admin link only to admins (UX only, the gateway enforces it)', () => {
-    expect(render(true, ['CUSTOMER']).element.textContent).not.toContain('Admin');
+  it('shows menu items by role (UX only, the backend enforces it)', () => {
+    const customer = render(true, ['CUSTOMER']).element.textContent;
+    expect(customer).toContain('Accounts');
+    expect(customer).not.toContain('Back office');
     TestBed.resetTestingModule();
-    expect(render(true, ['ADMIN']).element.textContent).toContain('Admin');
+
+    const support = render(true, ['SUPPORT']).element.textContent;
+    expect(support).toContain('Back office');
+    expect(support).not.toContain('Accounts');
   });
 
   it('logout calls the auth service', () => {

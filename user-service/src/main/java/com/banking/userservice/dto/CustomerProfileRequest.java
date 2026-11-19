@@ -7,8 +7,11 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-/** Full replacement of editable profile fields (PUT semantics). The identity link can't be changed. */
-public record UpdateCustomerRequest(
+/**
+ * The editable profile fields. Used by customers for their own profile (POST/PUT /api/customers/me)
+ * and by admins (PUT /api/admin/customers/{id}). The identity link (keycloakUserId) is never part of it.
+ */
+public record CustomerProfileRequest(
         @NotBlank @Size(max = 100) String firstName,
         @NotBlank @Size(max = 100) String lastName,
         @NotBlank @Email @Size(max = 254) String email,

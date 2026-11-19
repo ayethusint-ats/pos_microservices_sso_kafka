@@ -27,14 +27,15 @@ spring:
           # URIs are plain host names: service discovery is DNS (localhost now,
           # Docker service names in Phase 15, Kubernetes Services in Phase 16).
           routes:
+            # Each service owns its public (self-service) AND its back-office paths.
             - id: user-service
               uri: ${USER_SERVICE_URL:http://localhost:8081}
               predicates:
-                - Path=/api/customers/**,/api/whoami
+                - Path=/api/customers/**,/api/admin/customers/**,/api/whoami
             - id: account-service
               uri: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
               predicates:
-                - Path=/api/accounts/**
+                - Path=/api/accounts/**,/api/admin/accounts/**
             # Phase 9+: payment-service, transaction-service
 
 banking:

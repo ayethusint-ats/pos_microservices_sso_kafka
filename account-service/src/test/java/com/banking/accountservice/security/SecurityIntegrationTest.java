@@ -40,7 +40,7 @@ class SecurityIntegrationTest {
 
     @Test
     void requestWithoutTokenGets401ProblemDetail() throws Exception {
-        mockMvc.perform(get("/api/accounts").param("ownerId", "anyone"))
+        mockMvc.perform(get("/api/accounts"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", "Bearer"))
                 .andExpect(header().string("Content-Type", containsString("application/problem+json")))
@@ -50,7 +50,7 @@ class SecurityIntegrationTest {
 
     @Test
     void malformedTokenGets401InvalidToken() throws Exception {
-        mockMvc.perform(get("/api/accounts").param("ownerId", "anyone").header("Authorization", "Bearer not-a-jwt"))
+        mockMvc.perform(get("/api/accounts").header("Authorization", "Bearer not-a-jwt"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", containsString("error=\"invalid_token\"")))
                 .andExpect(jsonPath("$.detail").value("The access token is invalid or expired"));

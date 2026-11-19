@@ -1,10 +1,12 @@
 package com.banking.userservice.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.ObjectPostProcessor;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -39,6 +41,7 @@ import java.util.Collection;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity   // activates @PreAuthorize (and our meta-annotations built on it)
 @EnableConfigurationProperties(JwtProperties.class)
 public class SecurityConfig {
 
@@ -52,11 +55,18 @@ public class SecurityConfig {
                 // header the attacker's page can't set, and keep no session, so CSRF doesn't apply.
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Layer 1 of authorization: coarse URL rules. Layer 2 is @PreAuthorize on each
+                // controller method (see Authorization). Layer 3 is ownership in the service layer.
                 .authorizeHttpRequests(auth -> auth
+                        // Error rendering (e.g. Spring's /error dispatch) must not be blocked.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // Liveness/readiness probes (Docker, Kubernetes) must work without a token.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
-                        // Phase 5: any valid token is enough. Phase 8 adds role and ownership rules.
-                        .anyRequest().authenticated())
+                        // Back office: staff only, whatever the method-level rules say.
+                        .requestMatchers("/api/admin/**").hasAnyRole("SUPPORT", "ADMIN")
+                        .requestMatchers("/api/**").authenticated()
+                        // Allow-list: everything else is refused, even with a valid token.
+                        .anyRequest().denyAll())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                         .authenticationEntryPoint(entryPoint)

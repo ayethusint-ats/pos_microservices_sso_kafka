@@ -1,7 +1,6 @@
 package com.banking.accountservice.service;
 
 import com.banking.accountservice.dto.AccountResponse;
-import com.banking.accountservice.dto.CreateAccountRequest;
 import com.banking.accountservice.entity.Account;
 import com.banking.accountservice.entity.AccountType;
 import com.banking.accountservice.exception.ResourceNotFoundException;
@@ -48,7 +47,7 @@ class AccountServiceTest {
         when(accountRepository.existsByAccountNumber("2222222222")).thenReturn(false);
         when(accountRepository.saveAndFlush(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        AccountResponse response = accountService.open(new CreateAccountRequest("kc-1", AccountType.SAVINGS, "THB"));
+        AccountResponse response = accountService.open("kc-1", AccountType.SAVINGS, "THB", "kc-1");
 
         assertThat(response.accountNumber()).isEqualTo("2222222222");
         assertThat(response.balance()).isEqualByComparingTo("0");
@@ -56,17 +55,19 @@ class AccountServiceTest {
 
     @Test
     void open_rejectsUnknownCurrency() {
-        assertThatThrownBy(() -> accountService.open(new CreateAccountRequest("kc-1", AccountType.SAVINGS, "XYZ")))
+        assertThatThrownBy(() -> accountService.open("kc-1", AccountType.SAVINGS, "XYZ", "kc-1"))
                 .isInstanceOf(UnsupportedCurrencyException.class);
         verify(accountRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    void deposit_throwsWhenAccountMissing() {
+    void deposit_onSomeoneElsesAccountLooksLikeNotFound() {
         UUID id = UUID.randomUUID();
-        when(accountRepository.findById(id)).thenReturn(Optional.empty());
+        // The repository is asked for (id AND owner): another user's account simply isn't found.
+        when(accountRepository.findByIdAndOwnerId(id, "intruder")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> accountService.deposit(id, BigDecimal.TEN))
+        assertThatThrownBy(() -> accountService.deposit(id, "intruder", BigDecimal.TEN))
                 .isInstanceOf(ResourceNotFoundException.class);
+        verify(accountRepository, never()).flush();
     }
 }

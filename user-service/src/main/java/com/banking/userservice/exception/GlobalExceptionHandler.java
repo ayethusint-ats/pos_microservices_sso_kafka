@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -59,6 +60,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(PropertyReferenceException.class)
     public ProblemDetail handleBadSortProperty(PropertyReferenceException ex) {
         return problem(HttpStatus.BAD_REQUEST, "Invalid sort property", ex.getMessage());
+    }
+
+    /**
+     * @PreAuthorize denials are thrown INSIDE the controller call, so they reach this advice
+     * instead of Spring Security's filter. Without this handler the catch-all below would turn
+     * "forbidden" into a 500.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+        return problem(HttpStatus.FORBIDDEN, "Forbidden", "You do not have permission to perform this operation");
     }
 
     /** Last resort: never leak stack traces or internal messages to clients. */

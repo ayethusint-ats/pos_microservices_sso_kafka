@@ -64,6 +64,8 @@ class GatewayIntegrationTest {
                                 .sendString(Mono.just(echo(req))))
                         .get("/api/accounts", (req, res) -> res.header("Content-Type", "application/json")
                                 .sendString(Mono.just("[]")))
+                        .get("/api/admin/accounts", (req, res) -> res.header("Content-Type", "application/json")
+                                .sendString(Mono.just("[]")))
                         .get("/api/accounts/slow", (req, res) -> res.sendString(
                                 Mono.delay(Duration.ofSeconds(3)).thenReturn("too late"))))
                 .bindNow();
@@ -177,6 +179,15 @@ class GatewayIntegrationTest {
     void pathsOutsideApiAreDeniedEvenWithValidToken() {
         client.get().uri("/internal/secrets").header(HttpHeaders.AUTHORIZATION, "Bearer valid-curious").exchange()
                 .expectStatus().isForbidden();
+    }
+
+    @Test
+    void backOfficeIsStaffOnlyAtTheEdge() {
+        client.get().uri("/api/admin/accounts?ownerId=x").header(HttpHeaders.AUTHORIZATION, "Bearer valid-nosy").exchange()
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.title").isEqualTo("Forbidden");
+        client.get().uri("/api/admin/accounts?ownerId=x").header(HttpHeaders.AUTHORIZATION, "Bearer valid-sam.SUPPORT").exchange()
+                .expectStatus().isOk();
     }
 
     // ---------- downstream failures ----------

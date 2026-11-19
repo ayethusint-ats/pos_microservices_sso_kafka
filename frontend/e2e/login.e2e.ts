@@ -41,10 +41,12 @@ test('customer logs in with Authorization Code + PKCE and calls the API through 
   expect(tokenRequest?.postData()).toContain('code_verifier=');
   expect(page.url()).not.toContain('code=');
 
-  // 4. API calls go to the gateway with a bearer token; user-service confirms who we are.
-  await expect(page.getByTestId('whoami')).toContainText('7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c');
-  const apiCall = requests.find((r) => r.url().startsWith(`${GATEWAY}/api/whoami`));
+  // 4. API calls go to the gateway with a bearer token, and carry no user ID: the server takes it
+  //    from the token (Phase 8).
+  await expect(page.getByRole('heading', { name: 'My accounts' })).toBeVisible();
+  const apiCall = requests.find((r) => r.url().startsWith(`${GATEWAY}/api/accounts`));
   expect(apiCall?.headers()['authorization']).toMatch(/^Bearer ey/);
+  expect(apiCall?.url()).not.toContain('ownerId');
 
   // 5. Keycloak never receives the access token as a bearer header.
   for (const r of requests.filter((x) => x.url().startsWith(KEYCLOAK))) {
@@ -52,19 +54,22 @@ test('customer logs in with Authorization Code + PKCE and calls the API through 
   }
 
   // 6. A write call (POST, with CORS preflight) works end to end.
-  const before = await page.locator('[data-testid="accounts-table"] tbody tr').count();
+  const rows = page.locator('[data-testid="accounts-table"] tbody tr');
+  // Wait until the list has finished loading (table or "no accounts"), THEN count.
+  await expect(page.locator('[data-testid="accounts-table"], [data-testid="no-accounts"]').first()).toBeVisible();
+  const before = (await page.getByTestId('no-accounts').count()) > 0 ? 0 : await rows.count();
   await page.getByTestId('open-account').click();
-  await expect(page.locator('[data-testid="accounts-table"] tbody tr')).toHaveCount(before + 1);
+  await expect(rows).toHaveCount(before + 1);
 });
 
-test('route guard: a customer cannot open the admin page', async ({ page }) => {
+test('route guard: a customer cannot open the back office', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('login').click();
   await signInAtKeycloak(page, 'alice');
   await expect(page.getByTestId('current-user')).toHaveText('alice');
 
-  await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-  await page.goto('/admin');
+  await expect(page.getByRole('link', { name: 'Back office' })).toHaveCount(0);
+  await page.goto('/backoffice');
   await expect(page.getByTestId('forbidden')).toBeVisible();
 });
 
@@ -89,12 +94,13 @@ test('token refresh uses the refresh token grant', async ({ page }) => {
   await expect(page.getByText('Last manual refresh')).toBeVisible();
 });
 
-test('admin reaches the admin page, and the backend confirms ROLE_ADMIN', async ({ page }) => {
-  await page.goto('/admin');
+test('admin lands in the back office after login (deep link) and has no customer menu', async ({ page }) => {
+  await page.goto('/backoffice');
   await signInAtKeycloak(page, 'ada');
 
-  await expect(page).toHaveURL('http://localhost:4200/admin');
-  await expect(page.getByTestId('admin-authorities')).toContainText('ROLE_ADMIN');
+  await expect(page).toHaveURL('http://localhost:4200/backoffice');
+  await expect(page.getByText('Administrator: you can view customers')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Accounts' })).toHaveCount(0);
 });
 
 test('logout ends the Keycloak SSO session, so the next visit asks for the password again', async ({ page }) => {

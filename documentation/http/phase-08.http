@@ -1,0 +1,97 @@
+### Phase 8: role-based authorization through the gateway.
+### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|bob|sam|ada> 2>/dev/null
+
+@gw = http://localhost:8080
+@alice = paste-alice-token
+@bob = paste-bob-token
+@sam = paste-sam-token
+@ada = paste-ada-token
+@aliceId = 7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c
+@accountId = paste-an-alice-account-id
+
+### ---------- CUSTOMER self-service ----------
+
+### Alice's profile (404 = not created yet)
+GET {{gw}}/api/customers/me
+Authorization: Bearer {{alice}}
+
+### Create it (identity comes from the token; any keycloakUserId in the body is ignored)
+POST {{gw}}/api/customers/me
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "firstName": "Alice", "lastName": "Customer", "email": "alice@example.com", "phoneNumber": "+66 81 234 5678",
+  "address": { "street": "1 Silom Rd", "city": "Bangkok", "postalCode": "10500", "country": "TH" } }
+
+### Alice's accounts (no ownerId parameter any more)
+GET {{gw}}/api/accounts
+Authorization: Bearer {{alice}}
+
+### Open an account for herself
+POST {{gw}}/api/accounts
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "type": "SAVINGS", "currency": "THB" }
+
+### Deposit into her own account
+POST {{gw}}/api/accounts/{{accountId}}/deposit
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "amount": 100.00 }
+
+### ---------- attacks (all must fail) ----------
+
+### Bob reads Alice's account → 404 (indistinguishable from "doesn't exist")
+GET {{gw}}/api/accounts/{{accountId}}
+Authorization: Bearer {{bob}}
+
+### Bob withdraws from Alice's account → 404
+POST {{gw}}/api/accounts/{{accountId}}/withdraw
+Authorization: Bearer {{bob}}
+Content-Type: application/json
+
+{ "amount": 50.00 }
+
+### Sam (SUPPORT) withdraws → 403
+POST {{gw}}/api/accounts/{{accountId}}/withdraw
+Authorization: Bearer {{sam}}
+Content-Type: application/json
+
+{ "amount": 50.00 }
+
+### Alice opens the back office → 403
+GET {{gw}}/api/admin/customers
+Authorization: Bearer {{alice}}
+
+### ---------- back office ----------
+
+### Sam (SUPPORT) lists customers → 200
+GET {{gw}}/api/admin/customers?page=0&size=20
+Authorization: Bearer {{sam}}
+
+### Sam (SUPPORT) views Alice's accounts → 200
+GET {{gw}}/api/admin/accounts?ownerId={{aliceId}}
+Authorization: Bearer {{sam}}
+
+### Sam (SUPPORT) freezes an account → 403 (read-only role)
+PATCH {{gw}}/api/admin/accounts/{{accountId}}/status
+Authorization: Bearer {{sam}}
+Content-Type: application/json
+
+{ "status": "FROZEN", "reason": "test" }
+
+### Ada (ADMIN) freezes the account → 200; Alice's withdrawals now give 422 ACCOUNT_NOT_ACTIVE
+PATCH {{gw}}/api/admin/accounts/{{accountId}}/status
+Authorization: Bearer {{ada}}
+Content-Type: application/json
+
+{ "status": "FROZEN", "reason": "Suspicious activity reported by phone" }
+
+### Ada (ADMIN) unfreezes
+PATCH {{gw}}/api/admin/accounts/{{accountId}}/status
+Authorization: Bearer {{ada}}
+Content-Type: application/json
+
+{ "status": "ACTIVE", "reason": "Investigation closed" }
