@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Root aggregator POM for the Banking Platform.
+
+  What this file IS:
+    - A single place to pin the Spring Boot and Spring Cloud versions so every
+      service is built against the same, compatible set of libraries.
+    - A convenience to build all services with one `mvn verify`.
+
+  What this file is NOT:
+    - A shared runtime library. Services must not share domain code (entities,
+      DTOs) through this POM. Each service owns its model and is deployed on its own.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Spring Boot parent: manages versions of ~400 libraries and configures standard plugins. -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.16</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.banking</groupId>
+    <artifactId>banking-platform</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>Banking Platform</name>
+    <description>Learning project: banking microservices with Keycloak, Spring Cloud Gateway and Kafka</description>
+
+    <properties>
+        <!-- Compile for Java 21 bytecode even when building on a newer JDK (e.g. JDK 25). -->
+        <java.version>21</java.version>
+        <!-- Spring Cloud 2025.0.x ("Northfields") is the release train built for Spring Boot 3.5.x. -->
+        <spring-cloud.version>2025.0.3</spring-cloud.version>
+    </properties>
+
+    <!-- Services are added here as each phase creates them. -->
+    <modules>
+        <!-- Phase 2: <module>user-service</module> -->
+        <!-- Phase 2: <module>account-service</module> -->
+        <!-- Phase 6: <module>api-gateway</module> -->
+        <!-- Phase 9: <module>payment-service</module> -->
+        <!-- Phase 11: <module>transaction-service</module> -->
+        <!-- Phase 11: <module>notification-service</module> -->
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Importing the BOM pins versions only; it adds no dependencies to any service. -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <!-- Fail fast with a clear message if the build toolchain is too old. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,)</version>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.9,)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

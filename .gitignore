@@ -1,0 +1,26 @@
+# Build output
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+.classpath
+.project
+.settings/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Secrets and local environment (never commit real values)
+.env
+*.env.local
+
+# OS
+.DS_Store

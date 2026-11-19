@@ -1,0 +1,42 @@
+# Banking Platform
+
+A learning project: a banking system built as microservices with Spring Boot 3.5, Keycloak, Spring Cloud Gateway, Kafka and Angular.
+
+## Documentation
+
+| Phase | Topic | Doc |
+|---|---|---|
+| 1 | System architecture and project setup | [documentation/01-system-architecture.md](documentation/01-system-architecture.md) |
+
+## Layout
+
+```
+banking-platform/
+├── pom.xml                  # Root aggregator: pins Spring Boot + Spring Cloud versions
+├── .env.example             # Template for local secrets (copy to .env; never commit .env)
+├── frontend/                # Angular SPA (Phase 7)
+├── api-gateway/             # Spring Cloud Gateway (Phase 6)
+├── user-service/            # Customer profiles (Phase 2)
+├── account-service/         # Accounts and balances (Phase 2)
+├── payment-service/         # Transfers, Saga, idempotency (Phases 9–13)
+├── transaction-service/     # Transaction history from Kafka (Phase 11)
+├── notification-service/    # Simulated e-mails from Kafka (Phase 11)
+├── infrastructure/
+│   ├── keycloak/            # Realm export (Phase 4)
+│   ├── postgres/            # DB init scripts (Phase 3)
+│   └── kafka/               # Topic setup (Phase 11)
+└── documentation/
+```
+
+## Prerequisites
+
+- JDK 21 or newer (code targets Java 21)
+- Maven 3.9+
+- Docker with Docker Compose v2
+- Node.js LTS (for Angular, Phase 7)
+
+## Build
+
+```bash
+mvn -q validate      # checks toolchain versions
+```
