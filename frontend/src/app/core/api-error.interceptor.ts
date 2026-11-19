@@ -16,6 +16,8 @@ export class ApiError extends Error {
     readonly detail: string,
     readonly requestId: string | null,
     readonly fieldErrors: Record<string, string> = {},
+    /** Machine-readable reason from the service, e.g. INSUFFICIENT_FUNDS (422 responses). */
+    readonly code: string | null = null,
   ) {
     super(detail);
   }
@@ -63,6 +65,7 @@ export function toApiError(error: HttpErrorResponse): ApiError {
     detail: string;
     requestId: string;
     errors: Record<string, string>;
+    code: string;
   }>;
   if (error.status === 0) {
     // No HTTP response at all: network down, gateway not running, or blocked by CORS.
@@ -74,5 +77,6 @@ export function toApiError(error: HttpErrorResponse): ApiError {
     body.detail ?? error.message,
     body.requestId ?? error.headers?.get('X-Request-Id') ?? null,
     body.errors ?? {},
+    body.code ?? null,
   );
 }

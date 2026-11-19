@@ -8,6 +8,9 @@ import { ApiError } from '../core/api-error.interceptor';
     @if (error(); as e) {
       <div class="error" role="alert" data-testid="error">
         <strong>{{ e.title }}</strong> ({{ e.status }}): {{ e.detail }}
+        @if (e.code) {
+          <code data-testid="error-code">{{ e.code }}</code>
+        }
         @for (field of fieldNames(e); track field) {
           <div>{{ field }}: {{ e.fieldErrors[field] }}</div>
         }

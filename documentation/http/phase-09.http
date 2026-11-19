@@ -1,0 +1,110 @@
+### Phase 9: transfers. payment-service calls account-service over REST (token relay).
+### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|bob|sam> 2>/dev/null
+
+@gw = http://localhost:8080
+@alice = paste-alice-token
+@bob = paste-bob-token
+@sam = paste-sam-token
+@savings = paste-alice-thb-account-id-1
+@checking = paste-alice-thb-account-id-2
+@usd = paste-alice-usd-account-id
+@bobsAccount = paste-a-bob-account-id
+@paymentId = paste-a-payment-id
+
+### ---------- setup: Alice's accounts (Phase 8 endpoints) ----------
+
+### Open a THB account (run twice for savings + checking; once with "USD")
+POST {{gw}}/api/accounts
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "type": "SAVINGS", "currency": "THB" }
+
+### Fund the savings account
+POST {{gw}}/api/accounts/{{savings}}/deposit
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "amount": 500.00 }
+
+### ---------- transfers ----------
+
+### 201 COMPLETED: between Alice's own accounts
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{checking}}", "amount": 120.00, "description": "rent" }
+
+### 422 INSUFFICIENT_FUNDS (account-service's code, passed through)
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{checking}}", "amount": 9999.00 }
+
+### 422 CURRENCY_MISMATCH
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{usd}}", "amount": 1.00 }
+
+### 422 TARGET_ACCOUNT_NOT_FOUND: Alice → Bob. Token relay can't do this (fixed in Phase 10)
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{bobsAccount}}", "amount": 10.00 }
+
+### 422 SOURCE_ACCOUNT_NOT_FOUND: Bob tries to pay from Alice's account (account-service ownership check)
+POST {{gw}}/api/payments
+Authorization: Bearer {{bob}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{bobsAccount}}", "amount": 50.00 }
+
+### 400: same source and target, too many decimals
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{savings}}", "amount": 1.005 }
+
+### Stop account-service now, then send this → 503 + Retry-After, status FAILED, nothing moved
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{checking}}", "amount": 5.00 }
+
+### ---------- history ----------
+
+### Alice's payments, newest first (rejected and failed ones included)
+GET {{gw}}/api/payments?page=0&size=20
+Authorization: Bearer {{alice}}
+
+### One payment
+GET {{gw}}/api/payments/{{paymentId}}
+Authorization: Bearer {{alice}}
+
+### Bob asks for Alice's payment → 404
+GET {{gw}}/api/payments/{{paymentId}}
+Authorization: Bearer {{bob}}
+
+### ---------- back office ----------
+
+### SUPPORT: reconciliation work queue
+GET {{gw}}/api/admin/payments?status=NEEDS_RECONCILIATION
+Authorization: Bearer {{sam}}
+
+### SUPPORT: everything, newest first
+GET {{gw}}/api/admin/payments
+Authorization: Bearer {{sam}}
+
+### SUPPORT can't send money → 403
+POST {{gw}}/api/payments
+Authorization: Bearer {{sam}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{savings}}", "targetAccountId": "{{checking}}", "amount": 1.00 }

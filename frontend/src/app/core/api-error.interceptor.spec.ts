@@ -32,7 +32,7 @@ describe('apiErrorInterceptor', () => {
     http.get('http://localhost:8080/api/accounts/1').subscribe({ error: (e) => (received = e) });
 
     backend.expectOne('http://localhost:8080/api/accounts/1').flush(
-      { title: 'Business rule violation', detail: 'Insufficient funds', requestId: 'req-42' },
+      { title: 'Payment rejected', detail: 'Insufficient funds', requestId: 'req-42', code: 'INSUFFICIENT_FUNDS' },
       { status: 422, statusText: 'Unprocessable Entity' },
     );
 
@@ -40,6 +40,7 @@ describe('apiErrorInterceptor', () => {
     expect(received?.status).toBe(422);
     expect(received?.detail).toBe('Insufficient funds');
     expect(received?.requestId).toBe('req-42');
+    expect(received?.code).toBe('INSUFFICIENT_FUNDS');
   });
 
   it('starts a new login on 401, but only once within the loop-protection window', () => {

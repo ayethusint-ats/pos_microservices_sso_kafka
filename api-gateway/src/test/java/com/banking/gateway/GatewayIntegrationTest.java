@@ -40,7 +40,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
 
 /**
  * The whole gateway (security, CORS, rate limiting, routing, error mapping) against a real HTTP
- * "backend" started on a random port. It plays user-service and account-service.
+ * "backend" started on a random port. It plays user-, account- and payment-service.
  *
  * <p>Only the JWT decoder is mocked: tokens are named, e.g. {@code valid-alice},
  * {@code valid-ada.ADMIN}, {@code forged}, {@code idp-down}. Real signature checks were
@@ -67,11 +67,15 @@ class GatewayIntegrationTest {
                         .get("/api/admin/accounts", (req, res) -> res.header("Content-Type", "application/json")
                                 .sendString(Mono.just("[]")))
                         .get("/api/accounts/slow", (req, res) -> res.sendString(
-                                Mono.delay(Duration.ofSeconds(3)).thenReturn("too late"))))
+                                Mono.delay(Duration.ofSeconds(3)).thenReturn("too late")))
+                        // Slower than the global timeout (1 s here), within the payment route's own 10 s.
+                        .get("/api/payments/slow", (req, res) -> res.sendString(
+                                Mono.delay(Duration.ofSeconds(2)).thenReturn("transfer done"))))
                 .bindNow();
         String url = "http://localhost:" + backend.port();
         registry.add("USER_SERVICE_URL", () -> url);
         registry.add("ACCOUNT_SERVICE_URL", () -> url);
+        registry.add("PAYMENT_SERVICE_URL", () -> url);
     }
 
     @AfterAll
@@ -197,6 +201,13 @@ class GatewayIntegrationTest {
         client.get().uri("/api/accounts/slow").header(HttpHeaders.AUTHORIZATION, "Bearer valid-patient").exchange()
                 .expectStatus().isEqualTo(HttpStatus.GATEWAY_TIMEOUT)
                 .expectBody().jsonPath("$.title").isEqualTo("Gateway timeout");
+    }
+
+    @Test
+    void paymentRouteHasItsOwnLongerTimeout() {
+        client.get().uri("/api/payments/slow").header(HttpHeaders.AUTHORIZATION, "Bearer valid-payer").exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).isEqualTo("transfer done");
     }
 
     @Test

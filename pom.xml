@@ -45,7 +45,7 @@
         <module>user-service</module>
         <module>account-service</module>
         <module>api-gateway</module>
-        <!-- Phase 9: <module>payment-service</module> -->
+        <module>payment-service</module>
         <!-- Phase 11: <module>transaction-service</module> -->
         <!-- Phase 11: <module>notification-service</module> -->
     </modules>

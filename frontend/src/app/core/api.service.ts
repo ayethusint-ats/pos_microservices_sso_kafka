@@ -57,6 +57,32 @@ export interface Account {
   createdAt: string;
 }
 
+export type PaymentStatus =
+  | 'PENDING'
+  | 'DEBITED'
+  | 'COMPLETED'
+  | 'REJECTED'
+  | 'FAILED'
+  | 'REVERSED'
+  | 'NEEDS_RECONCILIATION';
+
+export interface TransferRequest {
+  sourceAccountId: string;
+  targetAccountId: string;
+  amount: number;
+  description: string;
+}
+
+export interface Payment extends TransferRequest {
+  id: string;
+  payerId: string;
+  currency: string | null;
+  status: PaymentStatus;
+  failureCode: string | null;
+  failureReason: string | null;
+  createdAt: string;
+}
+
 /**
  * All calls go to the API Gateway. The token is added by authTokenInterceptor, errors are
  * normalized by apiErrorInterceptor.
@@ -101,6 +127,18 @@ export class ApiService {
 
   withdraw(accountId: string, amount: number): Observable<Account> {
     return this.http.post<Account>(`${this.base}/api/accounts/${accountId}/withdraw`, { amount });
+  }
+
+  /**
+   * 201 → COMPLETED, 202 → NEEDS_RECONCILIATION (both arrive here as a Payment).
+   * 422/503 → ApiError: the transfer did not happen.
+   */
+  transfer(request: TransferRequest): Observable<Payment> {
+    return this.http.post<Payment>(`${this.base}/api/payments`, request);
+  }
+
+  myPayments(page = 0, size = 20): Observable<Page<Payment>> {
+    return this.http.get<Page<Payment>>(`${this.base}/api/payments`, { params: { page, size } });
   }
 
   // ------------------------------------------------------------ back office (SUPPORT, ADMIN)

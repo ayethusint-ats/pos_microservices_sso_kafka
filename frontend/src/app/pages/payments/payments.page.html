@@ -1,0 +1,85 @@
+<h1>Transfers</h1>
+
+<app-error-message [error]="error()" />
+
+@if (lastPayment(); as p) {
+  @if (p.status === 'COMPLETED') {
+    <div class="card" role="status" data-testid="transfer-done">
+      Transferred {{ p.amount | currency: p.currency ?? undefined }}.
+    </div>
+  } @else {
+    <div class="card" role="status" data-testid="transfer-pending">
+      Your transfer was received, but its result is not confirmed yet ({{ p.failureCode }}).
+      The bank will check it; please do not send it again.
+    </div>
+  }
+}
+
+<form class="card" (ngSubmit)="transfer()" data-testid="transfer-form">
+  @if (loading()) {
+    <p class="muted">Loading accounts…</p>
+  } @else if (activeAccounts().length < 2) {
+    <p class="muted" data-testid="need-two-accounts">You need at least two active accounts to transfer between them.</p>
+  } @else {
+    <label>
+      From
+      <select name="source" [(ngModel)]="sourceAccountId" required data-testid="source">
+        <option value="" disabled>Choose an account</option>
+        @for (a of activeAccounts(); track a.id) {
+          <option [value]="a.id">{{ a.accountNumber }} · {{ a.type }} · {{ a.balance | currency: a.currency }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      To
+      <select name="target" [(ngModel)]="targetAccountId" required data-testid="target">
+        <option value="" disabled>Choose an account</option>
+        @for (a of activeAccounts(); track a.id) {
+          <option [value]="a.id" [disabled]="a.id === sourceAccountId">{{ a.accountNumber }} · {{ a.type }} · {{ a.currency }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Amount
+      <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required
+             [(ngModel)]="amount" data-testid="transfer-amount" />
+    </label>
+    <label>
+      Description
+      <input type="text" name="description" maxlength="140" [(ngModel)]="description" />
+    </label>
+    <button type="submit" [disabled]="busy()" data-testid="send-transfer">Transfer</button>
+  }
+</form>
+
+<h2>History</h2>
+<div class="card">
+  @if (payments().length === 0) {
+    <p class="muted" data-testid="no-payments">No transfers yet.</p>
+  } @else {
+    <table data-testid="payments-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>From</th>
+          <th>To</th>
+          <th class="num">Amount</th>
+          <th>Status</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (p of payments(); track p.id) {
+          <tr [attr.data-payment]="p.id">
+            <td>{{ p.createdAt | date: 'short' }}</td>
+            <td>{{ accountLabel(p.sourceAccountId) }}</td>
+            <td>{{ accountLabel(p.targetAccountId) }}</td>
+            <td class="num">{{ p.amount | number: '1.2-2' }} {{ p.currency }}</td>
+            <td data-testid="payment-status">{{ p.status }}</td>
+            <td><code>{{ p.failureCode }}</code></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

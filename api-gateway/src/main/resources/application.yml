@@ -36,7 +36,15 @@ spring:
               uri: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
               predicates:
                 - Path=/api/accounts/**,/api/admin/accounts/**
-            # Phase 9+: payment-service, transaction-service
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/payments/**,/api/admin/payments/**
+              # A transfer is several calls deep (payment → account-service × 4), so it gets a longer
+              # budget than the global 5 s. Must exceed payment-service's own worst case (4 × 2 s).
+              metadata:
+                response-timeout: 10000   # ms
+            # Phase 11+: transaction-service
 
 banking:
   security:

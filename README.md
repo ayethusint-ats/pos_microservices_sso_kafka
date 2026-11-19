@@ -14,6 +14,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 6 | Spring Cloud Gateway | [documentation/06-spring-cloud-gateway.md](documentation/06-spring-cloud-gateway.md) |
 | 7 | Angular login, logout and token management | [documentation/07-angular-authentication.md](documentation/07-angular-authentication.md) |
 | 8 | Role-based authorization and ownership | [documentation/08-role-based-authorization.md](documentation/08-role-based-authorization.md) |
+| 9 | Service-to-service communication over REST | [documentation/09-service-to-service-rest.md](documentation/09-service-to-service-rest.md) |
 
 ## Layout
 
@@ -26,7 +27,7 @@ banking-platform/
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
 ├── account-service/         # Accounts and balances (Phase 2)
-├── payment-service/         # Transfers, Saga, idempotency (Phases 9–13)
+├── payment-service/         # Transfers :8083, calls account-service over REST (Phase 9); Saga, idempotency (Phase 13)
 ├── transaction-service/     # Transaction history from Kafka (Phase 11)
 ├── notification-service/    # Simulated e-mails from Kafka (Phase 11)
 ├── infrastructure/

@@ -1,0 +1,61 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: payment-service
+
+  # Local-dev convenience: secrets from the git-ignored .env (see user-service for details).
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:${POSTGRES_PORT:5433}}/payment_db
+    username: ${PAYMENT_DB_USERNAME:payment_svc}
+    password: ${PAYMENT_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      pool-name: payment-service-pool
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+banking:
+  security:
+    jwt:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
+      jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/banking/protocol/openid-connect/certs}
+      audience: banking-api
+
+  # Phase 9: outgoing service-to-service calls.
+  clients:
+    account-service:
+      # Direct to the service, NOT through the public gateway (no second rate limit, no CORS, one hop less).
+      base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+      connect-timeout: 1s
+      # Timeout budget: a transfer makes up to 4 sequential calls (2 reads, debit, credit/refund).
+      # 4 × 2 s = 8 s must stay below the gateway's response timeout for /api/payments (10 s),
+      # otherwise the client sees 504 while the transfer is still running.
+      read-timeout: 2s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN
