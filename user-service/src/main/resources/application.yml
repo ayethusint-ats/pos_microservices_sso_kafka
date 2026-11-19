@@ -48,6 +48,14 @@ spring:
       pageable:
         max-page-size: 100
 
+# Phase 5: this service is an OAuth2 Resource Server and trusts tokens from the Keycloak "banking" realm.
+banking:
+  security:
+    jwt:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
+      jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/banking/protocol/openid-connect/certs}
+      audience: banking-api
+
 management:
   endpoints:
     web:
@@ -55,4 +63,6 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: always   # shows DB status in /actuator/health (restricted in Phase 5)
+      # Anyone (probes) sees {"status":"UP"}; component details only for ROLE_ADMIN tokens.
+      show-details: when-authorized
+      roles: ADMIN

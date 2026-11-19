@@ -10,6 +10,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 2 | User Service and Account Service | [documentation/02-user-and-account-services.md](documentation/02-user-and-account-services.md) |
 | 3 | PostgreSQL and database-per-service | [documentation/03-postgresql-database-per-service.md](documentation/03-postgresql-database-per-service.md) |
 | 4 | Keycloak and centralized authentication | [documentation/04-keycloak-centralized-authentication.md](documentation/04-keycloak-centralized-authentication.md) |
+| 5 | Spring Security and JWT validation | [documentation/05-spring-security-jwt-validation.md](documentation/05-spring-security-jwt-validation.md) |
 
 ## Layout
 
@@ -44,7 +45,8 @@ banking-platform/
 ```bash
 cp .env.example .env                    # first time: then set real passwords in .env
 docker compose up -d                    # PostgreSQL :5433, Keycloak :8180
-./infrastructure/keycloak/pkce-login.sh alice   # log in, print tokens
+TOKEN=$(./infrastructure/keycloak/pkce-login.sh alice 2>/dev/null)   # log in as alice
+curl -s localhost:8081/api/whoami -H "Authorization: Bearer $TOKEN"  # once services run
 mvn verify                              # build all services and run tests (needs Docker)
 mvn -pl user-service spring-boot:run    # http://localhost:8081
 mvn -pl account-service spring-boot:run # http://localhost:8082

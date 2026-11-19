@@ -6,12 +6,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -20,10 +24,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
-@AutoConfigureMockMvc
 class AccountControllerIntegrationTest {
 
     @Autowired
+    private WebApplicationContext context;
+
     private MockMvc mockMvc;
 
     @Autowired
@@ -35,6 +40,20 @@ class AccountControllerIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         accountRepository.deleteAll();
+    }
+
+    /**
+     * Every request in this class carries a mock, already-validated JWT (spring-security-test).
+     * These tests are about business behavior. Token validation itself is covered in SecurityIntegrationTest.
+     */
+    @BeforeEach
+    void setUpAuthenticatedMockMvc() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(context)
+                .apply(springSecurity())
+                .defaultRequest(get("/").with(jwt()
+                        .jwt(token -> token.subject("7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+                .build();
     }
 
     @Test

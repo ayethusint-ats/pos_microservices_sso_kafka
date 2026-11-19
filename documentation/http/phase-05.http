@@ -1,0 +1,32 @@
+### Phase 5: calling secured services with a real token.
+### Get one with:  ./infrastructure/keycloak/pkce-login.sh alice 2>/dev/null
+### (access tokens live 5 minutes; get a fresh one when you see 401)
+
+@user = http://localhost:8081
+@account = http://localhost:8082
+@token = paste-access-token-here
+
+### Who does user-service think I am?
+GET {{user}}/api/whoami
+Authorization: Bearer {{token}}
+
+### Without a token: 401 problem+json and "WWW-Authenticate: Bearer"
+GET {{user}}/api/customers
+
+### Garbage token: 401 with error="invalid_token"
+GET {{user}}/api/customers
+Authorization: Bearer not-a-jwt
+
+### With a token
+GET {{account}}/api/accounts?ownerId=7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c
+Authorization: Bearer {{token}}
+
+### Open an account (still any authenticated user; roles arrive in Phase 8)
+POST {{account}}/api/accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "ownerId": "7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c", "type": "SAVINGS", "currency": "THB" }
+
+### Health: public summary; details only with an ADMIN (ada) token
+GET {{account}}/actuator/health
