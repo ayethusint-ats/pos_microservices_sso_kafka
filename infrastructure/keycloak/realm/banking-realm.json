@@ -28,10 +28,30 @@
       { "name": "CUSTOMER", "description": "Bank customer: own profile, own accounts, own transfers" },
       { "name": "SUPPORT",  "description": "Support agent: read-only access to customer data, cannot move money" },
       { "name": "ADMIN",    "description": "Administrator: manage users and accounts" }
-    ]
+    ],
+    "client": {
+      "account-service": [
+        {
+          "name": "internal-transfers",
+          "description": "Machine permission defined by account-service: look up any account by number and credit it. For payment-service only, never for people."
+        }
+      ]
+    }
   },
 
   "clients": [
+    {
+      "clientId": "account-service",
+      "name": "Account Service (resource server)",
+      "description": "Represents account-service's API. It never logs in (bearer-only); it exists to own the client roles (permissions) that callers can be granted.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
     {
       "clientId": "banking-frontend",
       "name": "Banking Angular SPA",
@@ -67,7 +87,7 @@
     {
       "clientId": "payment-service",
       "name": "Payment Service (machine identity)",
-      "description": "Confidential client for service-to-service calls (Client Credentials). Permissions are added in Phase 10.",
+      "description": "Confidential client for service-to-service calls (Client Credentials). Granted the account-service client role \"internal-transfers\" (Phase 10).",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -139,10 +159,12 @@
       "realmRoles": ["default-roles-banking", "ADMIN"]
     },
     {
+      "id": "2b5bcd1a-793b-478a-bb23-ba4f237cb143",
       "username": "service-account-payment-service",
       "enabled": true,
       "serviceAccountClientId": "payment-service",
-      "realmRoles": ["default-roles-banking"]
+      "realmRoles": [],
+      "clientRoles": { "account-service": ["internal-transfers"] }
     }
   ]
 }

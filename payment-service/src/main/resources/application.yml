@@ -32,6 +32,23 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Phase 10: payment-service as an OAuth2 CLIENT with its own identity (Client Credentials).
+  security:
+    oauth2:
+      client:
+        registration:
+          account-service:                         # registration ID, used in AccountClientConfig
+            provider: keycloak
+            client-id: payment-service
+            client-secret: ${PAYMENT_SERVICE_CLIENT_SECRET}   # from .env locally, a Secret in Kubernetes
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_basic
+        provider:
+          keycloak:
+            # Only the token endpoint: no OIDC discovery at startup, so the service starts even
+            # while Keycloak is down (the first internal call then fails cleanly with 503).
+            token-uri: ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/banking/protocol/openid-connect/token}
+
 banking:
   security:
     jwt:
@@ -45,7 +62,8 @@ banking:
       # Direct to the service, NOT through the public gateway (no second rate limit, no CORS, one hop less).
       base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
       connect-timeout: 1s
-      # Timeout budget: a transfer makes up to 4 sequential calls (2 reads, debit, credit/refund).
+      # Timeout budget: a transfer makes up to 4 sequential calls (2 reads, debit, credit/refund),
+      # plus at most one token request to Keycloak (cached for ~5 min).
       # 4 × 2 s = 8 s must stay below the gateway's response timeout for /api/payments (10 s),
       # otherwise the client sees 504 while the transfer is still running.
       read-timeout: 2s

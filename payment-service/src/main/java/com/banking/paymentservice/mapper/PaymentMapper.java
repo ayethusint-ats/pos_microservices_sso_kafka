@@ -15,6 +15,7 @@ public final class PaymentMapper {
                 payment.getPayerId(),
                 payment.getSourceAccountId(),
                 payment.getTargetAccountId(),
+                payment.getTargetAccountNumber(),
                 payment.getAmount(),
                 payment.getCurrency(),
                 payment.getDescription(),

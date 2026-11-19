@@ -1,6 +1,7 @@
 package com.banking.accountservice.mapper;
 
 import com.banking.accountservice.dto.AccountResponse;
+import com.banking.accountservice.dto.AccountSummary;
 import com.banking.accountservice.dto.BalanceResponse;
 import com.banking.accountservice.entity.Account;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,11 @@ public class AccountMapper {
                 account.getStatus(),
                 account.getCreatedAt(),
                 account.getUpdatedAt());
+    }
+
+    /** Deliberately minimal: no owner, no balance. */
+    public AccountSummary toSummary(Account account) {
+        return new AccountSummary(account.getId(), account.getAccountNumber(), account.getCurrency(), account.getStatus());
     }
 
     public BalanceResponse toBalance(Account account) {

@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PaymentTest {
 
     private Payment newPayment() {
-        return new Payment("alice", UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), "rent");
+        return new Payment("alice", UUID.randomUUID(), "1234567890", new BigDecimal("10.00"), "rent");
     }
 
     @Test
@@ -53,8 +53,24 @@ class PaymentTest {
     }
 
     @Test
+    void recipientCannotBeTheSourceAccount() {
+        Payment payment = newPayment();
+        assertThatThrownBy(() -> payment.accountsResolved(payment.getSourceAccountId(), "THB"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void accountsAreResolvedOnlyBeforeMoneyMoves() {
+        Payment payment = newPayment();
+        payment.accountsResolved(UUID.randomUUID(), "THB");
+        payment.markDebited();
+        assertThatThrownBy(() -> payment.accountsResolved(UUID.randomUUID(), "THB"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void amountIsStoredWithTwoDecimals() {
-        Payment payment = new Payment("alice", UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("120"), null);
+        Payment payment = new Payment("alice", UUID.randomUUID(), "1234567890", new BigDecimal("120"), null);
         assertThat(payment.getAmount()).hasToString("120.00");
     }
 

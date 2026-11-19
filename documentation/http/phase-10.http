@@ -1,0 +1,88 @@
+### Phase 10: Client Credentials. payment-service has its own identity.
+### User tokens:    ./infrastructure/keycloak/pkce-login.sh <alice|bob|sam> 2>/dev/null
+### Service token:  first request below (needs PAYMENT_SERVICE_CLIENT_SECRET from .env)
+
+@kc = http://localhost:8180/realms/banking/protocol/openid-connect
+@gw = http://localhost:8080
+@accountService = http://localhost:8082
+@clientSecret = paste-PAYMENT_SERVICE_CLIENT_SECRET
+@alice = paste-alice-token
+@bob = paste-bob-token
+@service = paste-service-access-token
+@aliceAccount = paste-an-alice-account-id
+@bobsAccountId = paste-a-bob-account-id
+@bobsNumber = paste-a-bob-account-number
+
+### ---------- the service's own token ----------
+
+### Client Credentials grant: client ID + secret (HTTP Basic), no user, no refresh token
+POST {{kc}}/token
+Authorization: Basic payment-service {{clientSecret}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+
+### ---------- customer flow (through the gateway) ----------
+
+### 201: Alice pays Bob by account number
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 120.00, "description": "dinner" }
+
+### 422 TARGET_ACCOUNT_NOT_FOUND
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "0000000000", "amount": 1.00 }
+
+### 422 SOURCE_ACCOUNT_NOT_FOUND: Bob can't pay from Alice's account (debit uses the OWNER's token)
+POST {{gw}}/api/payments
+Authorization: Bearer {{bob}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 50.00 }
+
+### 400: not a 10-digit account number
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "12345", "amount": 1.00 }
+
+### ---------- the internal API (account-service directly, as payment-service does) ----------
+
+### 200 with the service token: minimal data (no owner, no balance)
+GET {{accountService}}/internal/accounts/by-number/{{bobsNumber}}
+Authorization: Bearer {{service}}
+
+### 200: credit any account (the one thing payment-service may do that customers can't)
+POST {{accountService}}/internal/accounts/{{bobsAccountId}}/credit
+Authorization: Bearer {{service}}
+Content-Type: application/json
+
+{ "amount": 1.00, "paymentId": "00000000-0000-0000-0000-000000000001" }
+
+### 403: Alice's token on the internal API
+POST {{accountService}}/internal/accounts/{{bobsAccountId}}/credit
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "amount": 1000.00, "paymentId": "00000000-0000-0000-0000-000000000002" }
+
+### 403: the internal API through the gateway (never routed)
+GET {{gw}}/internal/accounts/by-number/{{bobsNumber}}
+Authorization: Bearer {{service}}
+
+### 403: the service token can't withdraw (no internal debit exists, and it isn't the owner)
+POST {{accountService}}/api/accounts/{{aliceAccount}}/withdraw
+Authorization: Bearer {{service}}
+Content-Type: application/json
+
+{ "amount": 1.00 }
+
+### 403: the service token can't list accounts or use the back office
+GET {{accountService}}/api/admin/accounts?ownerId=7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c
+Authorization: Bearer {{service}}

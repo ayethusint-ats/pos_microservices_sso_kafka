@@ -68,13 +68,17 @@ export type PaymentStatus =
 
 export interface TransferRequest {
   sourceAccountId: string;
-  targetAccountId: string;
+  /** Any customer's 10-digit account number (Phase 10). */
+  targetAccountNumber: string;
   amount: number;
   description: string;
 }
 
-export interface Payment extends TransferRequest {
+export interface Payment extends Omit<TransferRequest, 'targetAccountNumber'> {
   id: string;
+  targetAccountId: string | null;
+  /** null for Phase 9 payments, which were addressed by account ID. */
+  targetAccountNumber: string | null;
   payerId: string;
   currency: string | null;
   status: PaymentStatus;

@@ -2,6 +2,9 @@ package com.banking.paymentservice.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.oauth2.core.OAuth2AuthorizationException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
@@ -26,7 +29,11 @@ import java.util.function.Supplier;
  *       {@code outcomeUnknown} telling whether the operation might still have happened</li>
  * </ol>
  *
- * <p>The classification rule is the most important idea of this phase:
+ * <p>Two identities (Phase 10): reading the source and debiting it use the CUSTOMER's token
+ * (proof of consent, ownership enforced by account-service); finding the recipient and crediting
+ * use payment-service's OWN token (a permission no customer has).
+ *
+ * <p>The classification rule (Phase 9):
  * <pre>
  *   connection never opened (refused, connect timeout, unknown host) → did NOT happen
  *   4xx response                                                     → did NOT happen (refused)
@@ -36,24 +43,40 @@ import java.util.function.Supplier;
 @Component
 public class AccountServiceClient {
 
-    private final AccountApi accountApi;
+    private static final Logger log = LoggerFactory.getLogger(AccountServiceClient.class);
+
+    private final AccountApi customerApi;
+    private final InternalAccountApi internalApi;
     private final ObjectMapper objectMapper;
 
-    public AccountServiceClient(AccountApi accountApi, ObjectMapper objectMapper) {
-        this.accountApi = accountApi;
+    public AccountServiceClient(AccountApi customerApi, InternalAccountApi internalApi, ObjectMapper objectMapper) {
+        this.customerApi = customerApi;
+        this.internalApi = internalApi;
         this.objectMapper = objectMapper;
     }
 
-    public AccountView getAccount(UUID accountId) {
-        return call("GET account", () -> accountApi.getAccount(accountId));
+    // ---- with the CUSTOMER's token: account-service checks the account is theirs -------------
+
+    /** One of the caller's own accounts (404 if it isn't theirs). */
+    public AccountView getOwnAccount(UUID accountId) {
+        return call("GET own account", () -> customerApi.getAccount(accountId));
     }
 
+    /** Take money out of the caller's own account. Only possible with the customer's token: their consent. */
     public AccountView debit(UUID accountId, BigDecimal amount) {
-        return call("withdraw", () -> accountApi.withdraw(accountId, new MoneyCommand(amount)));
+        return call("withdraw", () -> customerApi.withdraw(accountId, new MoneyCommand(amount)));
     }
 
-    public AccountView credit(UUID accountId, BigDecimal amount) {
-        return call("deposit", () -> accountApi.deposit(accountId, new MoneyCommand(amount)));
+    // ---- with payment-service's OWN token (Client Credentials) ---------------------------------
+
+    /** Any account, by number. Minimal data: no owner, no balance. */
+    public AccountView findRecipient(String accountNumber) {
+        return call("find recipient", () -> internalApi.findByNumber(accountNumber));
+    }
+
+    /** Credit any active account; also used to refund the source when a transfer is reversed. */
+    public AccountView credit(UUID accountId, BigDecimal amount, UUID paymentId) {
+        return call("credit", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId)));
     }
 
     private <T> T call(String operation, Supplier<T> request) {
@@ -61,6 +84,14 @@ public class AccountServiceClient {
             return request.get();
         } catch (RestClientResponseException ex) {
             throw translate(operation, ex);
+        } catch (OAuth2AuthorizationException ex) {
+            // Couldn't get payment-service's own token (Keycloak down, wrong secret). Thrown BEFORE
+            // the request was sent, so account-service certainly did nothing. Full detail only in
+            // the log: the failure reason is shown to customers, and Keycloak's message is for operators.
+            log.warn("Could not obtain payment-service's access token: {}", ex.getMessage());
+            throw new AccountServiceUnavailableException(
+                    "account-service %s not attempted: no service token (%s)".formatted(operation, ex.getError().getErrorCode()),
+                    false, ex);
         } catch (ResourceAccessException ex) {
             // I/O failure: no HTTP response at all. Did the request ever reach the server?
             boolean neverSent = isConnectionFailure(ex);

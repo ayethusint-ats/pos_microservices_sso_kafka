@@ -15,6 +15,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 7 | Angular login, logout and token management | [documentation/07-angular-authentication.md](documentation/07-angular-authentication.md) |
 | 8 | Role-based authorization and ownership | [documentation/08-role-based-authorization.md](documentation/08-role-based-authorization.md) |
 | 9 | Service-to-service communication over REST | [documentation/09-service-to-service-rest.md](documentation/09-service-to-service-rest.md) |
+| 10 | Client Credentials: a service's own identity | [documentation/10-client-credentials.md](documentation/10-client-credentials.md) |
 
 ## Layout
 

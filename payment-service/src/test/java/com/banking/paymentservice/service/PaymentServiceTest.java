@@ -25,6 +25,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -38,6 +39,7 @@ class PaymentServiceTest {
 
     private static final UUID SOURCE = UUID.fromString("aaaaaaaa-0000-0000-0000-000000000001");
     private static final UUID TARGET = UUID.fromString("bbbbbbbb-0000-0000-0000-000000000002");
+    private static final String TARGET_NUMBER = "2222222222";
     private static final BigDecimal AMOUNT = new BigDecimal("100.00");
 
     @Mock
@@ -62,12 +64,24 @@ class PaymentServiceTest {
     }
 
     private static TransferRequest request() {
-        return new TransferRequest(SOURCE, TARGET, AMOUNT, "rent");
+        return new TransferRequest(SOURCE, TARGET_NUMBER, AMOUNT, "rent");
     }
 
-    private void bothAccountsActive(String sourceCurrency, String targetCurrency) {
-        when(accounts.getAccount(SOURCE)).thenReturn(new AccountView(SOURCE, "alice", sourceCurrency, BigDecimal.TEN, "ACTIVE"));
-        when(accounts.getAccount(TARGET)).thenReturn(new AccountView(TARGET, "alice", targetCurrency, BigDecimal.TEN, "ACTIVE"));
+    private void source(String currency) {
+        when(accounts.getOwnAccount(SOURCE)).thenReturn(new AccountView(SOURCE, "1111111111", "alice", currency, BigDecimal.TEN, "ACTIVE"));
+    }
+
+    private void recipient(String currency, String status) {
+        when(accounts.findRecipient(TARGET_NUMBER)).thenReturn(new AccountView(TARGET, TARGET_NUMBER, null, currency, null, status));
+    }
+
+    private void bothAccountsActive() {
+        source("THB");
+        recipient("THB", "ACTIVE");
+    }
+
+    private void creditToTargetFails(RuntimeException failure) {
+        when(accounts.credit(eq(TARGET), eq(AMOUNT), any())).thenThrow(failure);
     }
 
     private static AccountServiceUnavailableException unreachable() {
@@ -85,27 +99,37 @@ class PaymentServiceTest {
     // ------------------------------------------------------------------ success
 
     @Test
-    void debitsThenCreditsAndRecordsEveryStep() {
-        bothAccountsActive("THB", "THB");
+    void debitsWithTheCustomersTokenThenCreditsWithTheServiceToken() {
+        bothAccountsActive();
 
         PaymentResponse result = service.transfer("alice", request());
 
         assertThat(result.status()).isEqualTo(PaymentStatus.COMPLETED);
         assertThat(result.currency()).isEqualTo("THB");
-        InOrder order = inOrder(accounts, repository);
-        order.verify(repository).save(any());                 // PENDING, before any remote call
-        order.verify(accounts).debit(SOURCE, AMOUNT);
-        order.verify(repository).save(any());                 // DEBITED checkpoint
-        order.verify(accounts).credit(TARGET, AMOUNT);
-        order.verify(repository).save(any());                 // COMPLETED
+        assertThat(result.targetAccountId()).isEqualTo(TARGET);
+        InOrder order = inOrder(accounts);
+        order.verify(accounts).getOwnAccount(SOURCE);          // customer token
+        order.verify(accounts).findRecipient(TARGET_NUMBER);   // service token
+        order.verify(accounts).debit(SOURCE, AMOUNT);          // customer token: consent
+        order.verify(accounts).credit(eq(TARGET), eq(AMOUNT), any());   // service token
+        assertThat(statusesAtSaveTime).containsExactly(PaymentStatus.PENDING, PaymentStatus.DEBITED, PaymentStatus.COMPLETED);
     }
 
     // ------------------------------------------------------------------ nothing moved
 
     @Test
-    void targetOfAnotherCustomerIsRejectedBeforeAnyMoneyMoves() {
-        when(accounts.getAccount(SOURCE)).thenReturn(new AccountView(SOURCE, "alice", "THB", BigDecimal.TEN, "ACTIVE"));
-        when(accounts.getAccount(TARGET)).thenThrow(new AccountRejectedException(404, "ACCOUNT_NOT_FOUND", "not found"));
+    void sourceOfAnotherCustomerIsRejected() {
+        when(accounts.getOwnAccount(SOURCE)).thenThrow(new AccountRejectedException(404, "ACCOUNT_NOT_FOUND", "not found"));
+
+        assertThat(transferFails().getPayment().failureCode()).isEqualTo("SOURCE_ACCOUNT_NOT_FOUND");
+        verify(accounts, never()).findRecipient(any());
+        verify(accounts, never()).debit(any(), any());
+    }
+
+    @Test
+    void unknownAccountNumberIsRejectedBeforeAnyMoneyMoves() {
+        source("THB");
+        when(accounts.findRecipient(TARGET_NUMBER)).thenThrow(new AccountRejectedException(404, "ACCOUNT_NOT_FOUND", "not found"));
 
         PaymentNotCompletedException ex = transferFails();
 
@@ -116,8 +140,18 @@ class PaymentServiceTest {
     }
 
     @Test
+    void ownSourceNumberAsRecipientIsRejected() {
+        source("THB");
+        when(accounts.findRecipient(TARGET_NUMBER)).thenReturn(new AccountView(SOURCE, TARGET_NUMBER, null, "THB", null, "ACTIVE"));
+
+        assertThat(transferFails().getPayment().failureCode()).isEqualTo("SAME_ACCOUNT");
+        verify(accounts, never()).debit(any(), any());
+    }
+
+    @Test
     void currencyMismatchIsRejectedBeforeAnyMoneyMoves() {
-        bothAccountsActive("THB", "USD");
+        source("THB");
+        recipient("USD", "ACTIVE");
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("CURRENCY_MISMATCH");
         verify(accounts, never()).debit(any(), any());
@@ -125,8 +159,8 @@ class PaymentServiceTest {
 
     @Test
     void frozenTargetIsRejectedBeforeAnyMoneyMoves() {
-        when(accounts.getAccount(SOURCE)).thenReturn(new AccountView(SOURCE, "alice", "THB", BigDecimal.TEN, "ACTIVE"));
-        when(accounts.getAccount(TARGET)).thenReturn(new AccountView(TARGET, "alice", "THB", BigDecimal.TEN, "FROZEN"));
+        source("THB");
+        recipient("THB", "FROZEN");
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("TARGET_ACCOUNT_NOT_ACTIVE");
         verify(accounts, never()).debit(any(), any());
@@ -134,19 +168,19 @@ class PaymentServiceTest {
 
     @Test
     void insufficientFundsIsPassedThroughFromAccountService() {
-        bothAccountsActive("THB", "THB");
+        bothAccountsActive();
         when(accounts.debit(SOURCE, AMOUNT)).thenThrow(new AccountRejectedException(422, "INSUFFICIENT_FUNDS", "balance 10.00"));
 
         PaymentNotCompletedException ex = transferFails();
 
         assertThat(ex.getPayment().status()).isEqualTo(PaymentStatus.REJECTED);
         assertThat(ex.getPayment().failureCode()).isEqualTo("INSUFFICIENT_FUNDS");
-        verify(accounts, never()).credit(any(), any());
+        verify(accounts, never()).credit(any(), any(), any());
     }
 
     @Test
     void accountServiceDownBeforeTheDebitFailsRetryably() {
-        when(accounts.getAccount(SOURCE)).thenThrow(unreachable());
+        when(accounts.getOwnAccount(SOURCE)).thenThrow(unreachable());
 
         PaymentNotCompletedException ex = transferFails();
 
@@ -155,11 +189,23 @@ class PaymentServiceTest {
         verify(accounts, never()).debit(any(), any());
     }
 
+    @Test
+    void noServiceTokenBeforeTheDebitFailsRetryably() {
+        source("THB");
+        when(accounts.findRecipient(TARGET_NUMBER)).thenThrow(
+                new AccountServiceUnavailableException("no service token (invalid_client)", false, null));
+
+        PaymentNotCompletedException ex = transferFails();
+
+        assertThat(ex.getPayment().status()).isEqualTo(PaymentStatus.FAILED);
+        verify(accounts, never()).debit(any(), any());
+    }
+
     // ------------------------------------------------------------------ the hard cases
 
     @Test
     void debitTimeoutNeedsReconciliationAndIsNotRetriedBlindly() {
-        bothAccountsActive("THB", "THB");
+        bothAccountsActive();
         when(accounts.debit(SOURCE, AMOUNT)).thenThrow(timedOut());
 
         PaymentResponse result = service.transfer("alice", request());
@@ -167,13 +213,13 @@ class PaymentServiceTest {
         assertThat(result.status()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
         assertThat(result.failureCode()).isEqualTo("DEBIT_OUTCOME_UNKNOWN");
         verify(accounts).debit(SOURCE, AMOUNT);              // exactly once: a retry might debit twice
-        verify(accounts, never()).credit(any(), any());
+        verify(accounts, never()).credit(any(), any(), any());
     }
 
     @Test
     void creditRefusedAfterDebitIsCompensatedByRefundingTheSource() {
-        bothAccountsActive("THB", "THB");
-        when(accounts.credit(TARGET, AMOUNT)).thenThrow(new AccountRejectedException(422, "ACCOUNT_NOT_ACTIVE", "frozen"));
+        bothAccountsActive();
+        creditToTargetFails(new AccountRejectedException(422, "ACCOUNT_NOT_ACTIVE", "frozen"));
 
         PaymentNotCompletedException ex = transferFails();
 
@@ -182,40 +228,31 @@ class PaymentServiceTest {
         assertThat(ex.isRetryable()).isFalse();
         InOrder order = inOrder(accounts);
         order.verify(accounts).debit(SOURCE, AMOUNT);
-        order.verify(accounts).credit(TARGET, AMOUNT);
-        order.verify(accounts).credit(SOURCE, AMOUNT);       // the compensating refund
+        order.verify(accounts).credit(eq(TARGET), eq(AMOUNT), any());
+        order.verify(accounts).credit(eq(SOURCE), eq(AMOUNT), any());       // the compensating refund
     }
 
     @Test
     void creditTimeoutIsNotRefundedBecauseTheCreditMayHaveHappened() {
-        bothAccountsActive("THB", "THB");
-        when(accounts.credit(TARGET, AMOUNT)).thenThrow(timedOut());
+        bothAccountsActive();
+        creditToTargetFails(timedOut());
 
         PaymentResponse result = service.transfer("alice", request());
 
         assertThat(result.status()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
         assertThat(result.failureCode()).isEqualTo("CREDIT_OUTCOME_UNKNOWN");
-        verify(accounts, never()).credit(SOURCE, AMOUNT);    // refunding could pay out twice
+        verify(accounts, never()).credit(eq(SOURCE), any(), any());          // refunding could pay out twice
     }
 
     @Test
     void failedRefundIsEscalatedNotHidden() {
-        bothAccountsActive("THB", "THB");
-        when(accounts.credit(TARGET, AMOUNT)).thenThrow(unreachable());
-        when(accounts.credit(SOURCE, AMOUNT)).thenThrow(unreachable());
+        bothAccountsActive();
+        creditToTargetFails(unreachable());
+        when(accounts.credit(eq(SOURCE), eq(AMOUNT), any())).thenThrow(unreachable());
 
         PaymentResponse result = service.transfer("alice", request());
 
         assertThat(result.status()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
         assertThat(result.failureCode()).isEqualTo("REFUND_FAILED");
-    }
-
-    @Test
-    void theDebitedCheckpointIsSavedBeforeTheCredit() {
-        bothAccountsActive("THB", "THB");
-
-        service.transfer("alice", request());
-
-        assertThat(statusesAtSaveTime).containsExactly(PaymentStatus.PENDING, PaymentStatus.DEBITED, PaymentStatus.COMPLETED);
     }
 }

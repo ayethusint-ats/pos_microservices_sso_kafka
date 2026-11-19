@@ -35,9 +35,15 @@ public final class TestUsers {
         return user(ADA_ID, "ADMIN");
     }
 
-    /** A valid token with no business role at all, like payment-service's service account today. */
+    /** A valid token with no role and no permission at all, e.g. some other application. */
     public static RequestPostProcessor noRole() {
-        return jwt().jwt(token -> token.subject("2b5bcd1a-793b-478a-bb23-ba4f237cb143"));
+        return jwt().jwt(token -> token.subject("0e0e0e0e-0000-4000-8000-000000000000").claim("azp", "reporting-tool"));
+    }
+
+    /** payment-service's Client Credentials token: no realm role, one account-service permission. */
+    public static RequestPostProcessor paymentService() {
+        return jwt().jwt(token -> token.subject("2b5bcd1a-793b-478a-bb23-ba4f237cb143").claim("azp", "payment-service"))
+                .authorities(new SimpleGrantedAuthority("PERMISSION_internal-transfers"));
     }
 
     private static RequestPostProcessor user(String subject, String role) {

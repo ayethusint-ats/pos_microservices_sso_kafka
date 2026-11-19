@@ -18,8 +18,8 @@
 <form class="card" (ngSubmit)="transfer()" data-testid="transfer-form">
   @if (loading()) {
     <p class="muted">Loading accounts…</p>
-  } @else if (activeAccounts().length < 2) {
-    <p class="muted" data-testid="need-two-accounts">You need at least two active accounts to transfer between them.</p>
+  } @else if (activeAccounts().length === 0) {
+    <p class="muted" data-testid="need-an-account">You need an active account to send money.</p>
   } @else {
     <label>
       From
@@ -31,13 +31,15 @@
       </select>
     </label>
     <label>
-      To
-      <select name="target" [(ngModel)]="targetAccountId" required data-testid="target">
-        <option value="" disabled>Choose an account</option>
+      To account number
+      <!-- Any customer's account number; the list suggests the customer's own accounts. -->
+      <input type="text" name="target" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required
+             placeholder="10 digits" list="own-accounts" [(ngModel)]="targetAccountNumber" data-testid="target" />
+      <datalist id="own-accounts">
         @for (a of activeAccounts(); track a.id) {
-          <option [value]="a.id" [disabled]="a.id === sourceAccountId">{{ a.accountNumber }} · {{ a.type }} · {{ a.currency }}</option>
+          <option [value]="a.accountNumber">{{ a.type }} · {{ a.currency }} (yours)</option>
         }
-      </select>
+      </datalist>
     </label>
     <label>
       Amount
@@ -73,7 +75,15 @@
           <tr [attr.data-payment]="p.id">
             <td>{{ p.createdAt | date: 'short' }}</td>
             <td>{{ accountLabel(p.sourceAccountId) }}</td>
-            <td>{{ accountLabel(p.targetAccountId) }}</td>
+            <td>
+              @if (p.targetAccountNumber) {
+                <code>{{ p.targetAccountNumber }}</code>
+                @if (!ownNumbers().has(p.targetAccountNumber)) { <small class="muted">(other customer)</small> }
+              } @else {
+                <!-- Phase 9 payments were addressed by account ID -->
+                {{ accountLabel(p.targetAccountId ?? '') }}
+              }
+            </td>
             <td class="num">{{ p.amount | number: '1.2-2' }} {{ p.currency }}</td>
             <td data-testid="payment-status">{{ p.status }}</td>
             <td><code>{{ p.failureCode }}</code></td>

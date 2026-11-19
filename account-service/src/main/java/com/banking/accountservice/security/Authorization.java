@@ -21,7 +21,33 @@ import java.lang.annotation.Target;
  */
 public final class Authorization {
 
+    /** Authority for payment-service's machine permission (a client role of account-service). */
+    public static final String INTERNAL_TRANSFERS = "PERMISSION_internal-transfers";
+
     private Authorization() {
+    }
+
+    /**
+     * Machine-to-machine endpoints: only applications granted account-service's
+     * "internal-transfers" permission (today: payment-service via Client Credentials).
+     * A customer, SUPPORT or ADMIN token never carries it.
+     */
+    @Target({ElementType.METHOD, ElementType.TYPE})
+    @Retention(RetentionPolicy.RUNTIME)
+    @Documented
+    @PreAuthorize("hasAuthority('PERMISSION_internal-transfers')")
+    public @interface InternalTransfers {
+    }
+
+    /**
+     * Injects the calling APPLICATION: the token's {@code azp} (authorized party = OAuth2 client ID),
+     * e.g. "payment-service". For audit logs of machine calls, where {@code sub} is just a service-account ID.
+     */
+    @Target(ElementType.PARAMETER)
+    @Retention(RetentionPolicy.RUNTIME)
+    @Documented
+    @AuthenticationPrincipal(expression = "getClaimAsString('azp')")
+    public @interface CallingClient {
     }
 
     /** Self-service endpoints: only bank customers, acting on their own data. */

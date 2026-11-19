@@ -1,5 +1,7 @@
 # Phase 9: Service-to-Service Communication over REST
 
+> **Later change (Phase 10):** the recipient is now given as `targetAccountNumber`, and the credit/refund use payment-service's own token. See [10-client-credentials.md](10-client-credentials.md).
+
 ## 1. Concepts
 
 Until now every request ended in **one** service. A transfer is different: payment-service must ask account-service to **debit** one account and **credit** another. This is the first call from one of our services to another.

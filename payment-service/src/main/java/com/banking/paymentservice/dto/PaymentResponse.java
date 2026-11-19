@@ -11,6 +11,7 @@ public record PaymentResponse(
         String payerId,
         UUID sourceAccountId,
         UUID targetAccountId,
+        String targetAccountNumber,
         BigDecimal amount,
         String currency,
         String description,

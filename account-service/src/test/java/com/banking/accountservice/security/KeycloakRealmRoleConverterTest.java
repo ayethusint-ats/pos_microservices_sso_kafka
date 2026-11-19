@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class KeycloakRealmRoleConverterTest {
 
-    private final KeycloakRealmRoleConverter converter = new KeycloakRealmRoleConverter();
+    private final KeycloakRealmRoleConverter converter = new KeycloakRealmRoleConverter("account-service");
 
     @Test
     void mapsRealmRolesToRoleAuthoritiesAndKeepsScopes() {
@@ -36,6 +36,16 @@ class KeycloakRealmRoleConverterTest {
         Jwt jwt = token(Map.of("realm_access", Map.of("roles", "ADMIN")));   // a string, not a list
 
         assertThat(converter.convert(jwt)).isEmpty();
+    }
+
+    @Test
+    void mapsOwnClientRolesToPermissionsAndIgnoresOtherClients() {
+        Jwt jwt = token(Map.of("resource_access", Map.of(
+                "account-service", Map.of("roles", List.of("internal-transfers")),
+                "account", Map.of("roles", List.of("manage-account")))));
+
+        assertThat(converter.convert(jwt)).extracting(GrantedAuthority::getAuthority)
+                .containsExactly("PERMISSION_internal-transfers");
     }
 
     private static Jwt token(Map<String, Object> claims) {

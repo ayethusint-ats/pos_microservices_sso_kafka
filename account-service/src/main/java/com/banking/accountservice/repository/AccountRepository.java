@@ -19,4 +19,7 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     Optional<Account> findByIdAndOwnerId(UUID id, String ownerId);
 
     boolean existsByAccountNumber(String accountNumber);
+
+    /** Phase 10: payment recipients are addressed by account number, like in real banking. */
+    Optional<Account> findByAccountNumber(String accountNumber);
 }

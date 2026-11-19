@@ -43,8 +43,13 @@ public class Payment {
     @Column(nullable = false, updatable = false)
     private UUID sourceAccountId;
 
-    @Column(nullable = false, updatable = false)
+    /** account-service ID of the recipient; null until account-service resolved the number. */
+    @Column
     private UUID targetAccountId;
+
+    /** What the customer typed: the recipient's account number (may belong to another customer). */
+    @Column(updatable = false, length = 10)
+    private String targetAccountNumber;
 
     @Column(nullable = false, updatable = false, precision = 19, scale = 2)
     private BigDecimal amount;
@@ -82,10 +87,10 @@ public class Payment {
         // for JPA
     }
 
-    public Payment(String payerId, UUID sourceAccountId, UUID targetAccountId, BigDecimal amount, String description) {
+    public Payment(String payerId, UUID sourceAccountId, String targetAccountNumber, BigDecimal amount, String description) {
         this.payerId = Objects.requireNonNull(payerId);
         this.sourceAccountId = Objects.requireNonNull(sourceAccountId);
-        this.targetAccountId = Objects.requireNonNull(targetAccountId);
+        this.targetAccountNumber = Objects.requireNonNull(targetAccountNumber);
         // Always 2 decimals ("120" → 120.00), the same scale as the database column.
         // UNNECESSARY: a 3rd decimal must have been rejected by validation, never silently rounded.
         this.amount = Objects.requireNonNull(amount).setScale(2, RoundingMode.UNNECESSARY);
@@ -95,8 +100,16 @@ public class Payment {
 
     // ------------------------------------------------------------------ state transitions
 
-    public void currencyConfirmed(String currency) {
-        this.currency = currency;
+    /** account-service confirmed both accounts: we now know the recipient's ID and the currency. */
+    public void accountsResolved(UUID targetAccountId, String currency) {
+        if (status != PaymentStatus.PENDING) {
+            throw new IllegalStateException("Accounts can only be resolved while PENDING");
+        }
+        if (sourceAccountId.equals(targetAccountId)) {
+            throw new IllegalArgumentException("Source and target account must differ");
+        }
+        this.targetAccountId = Objects.requireNonNull(targetAccountId);
+        this.currency = Objects.requireNonNull(currency);
     }
 
     public void markDebited() {
@@ -152,6 +165,10 @@ public class Payment {
 
     public UUID getTargetAccountId() {
         return targetAccountId;
+    }
+
+    public String getTargetAccountNumber() {
+        return targetAccountNumber;
     }
 
     public BigDecimal getAmount() {

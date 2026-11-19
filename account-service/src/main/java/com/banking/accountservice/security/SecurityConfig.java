@@ -45,6 +45,9 @@ import java.util.Collection;
 @EnableConfigurationProperties(JwtProperties.class)
 public class SecurityConfig {
 
+    /** The Keycloak client that represents this service and owns its permissions (client roles). */
+    static final String RESOURCE_CLIENT_ID = "account-service";
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
         ProblemDetailsAuthenticationEntryPoint entryPoint = new ProblemDetailsAuthenticationEntryPoint(objectMapper);
@@ -64,6 +67,10 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         // Back office: staff only, whatever the method-level rules say.
                         .requestMatchers("/api/admin/**").hasAnyRole("SUPPORT", "ADMIN")
+                        // Phase 10: machine-to-machine API. Only callers holding account-service's
+                        // "internal-transfers" permission (payment-service's service account).
+                        // Not routed by the gateway either: unreachable from the internet.
+                        .requestMatchers("/internal/**").hasAuthority(Authorization.INTERNAL_TRANSFERS)
                         .requestMatchers("/api/**").authenticated()
                         // Allow-list: everything else is refused, even with a valid token.
                         .anyRequest().denyAll())
@@ -110,7 +117,7 @@ public class SecurityConfig {
     @Bean
     JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(new KeycloakRealmRoleConverter());
+        converter.setJwtGrantedAuthoritiesConverter(new KeycloakRealmRoleConverter(RESOURCE_CLIENT_ID));
         converter.setPrincipalClaimName(JwtClaimNames.SUB);
         return converter;
     }

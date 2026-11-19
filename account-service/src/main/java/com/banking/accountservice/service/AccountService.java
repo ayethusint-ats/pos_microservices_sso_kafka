@@ -1,6 +1,7 @@
 package com.banking.accountservice.service;
 
 import com.banking.accountservice.dto.AccountResponse;
+import com.banking.accountservice.dto.AccountSummary;
 import com.banking.accountservice.dto.BalanceResponse;
 import com.banking.accountservice.entity.Account;
 import com.banking.accountservice.entity.AccountStatus;
@@ -96,6 +97,28 @@ public class AccountService {
         accountRepository.flush();
         audit.info("action=WITHDRAW actor={} account={} amount={}", ownerId, id, amount);
         return accountMapper.toResponse(account);
+    }
+
+    // ---------------------------------------------------------------- machine-to-machine (Phase 10)
+
+    /** For payment-service: is this a valid recipient? No owner or balance is revealed. */
+    @Transactional(readOnly = true)
+    public AccountSummary findRecipient(String accountNumber) {
+        return accountRepository.findByAccountNumber(accountNumber).map(accountMapper::toSummary)
+                .orElseThrow(() -> new ResourceNotFoundException("Account number '%s' not found".formatted(accountNumber)));
+    }
+
+    /**
+     * Credit ANY active account: the one capability payment-service needs that no customer has.
+     * The payment ID links this ledger entry to the payment that caused it (idempotency: Phase 13).
+     */
+    @Transactional
+    public AccountSummary creditForPayment(UUID id, BigDecimal amount, UUID paymentId, String clientId) {
+        Account account = findOrThrow(id);
+        account.deposit(amount);
+        accountRepository.flush();
+        audit.info("action=CREDIT actor=client:{} account={} amount={} payment={}", clientId, id, amount, paymentId);
+        return accountMapper.toSummary(account);
     }
 
     // ---------------------------------------------------------------- back-office operations

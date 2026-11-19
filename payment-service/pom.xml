@@ -38,6 +38,13 @@
             <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
+        <!-- Phase 10: OAuth2 CLIENT side. payment-service obtains its own access token from Keycloak
+             (Client Credentials grant) for calls to account-service's internal API. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-client</artifactId>
+        </dependency>
+
         <!-- PostgreSQL JDBC driver (only needed at runtime, the code uses JPA/JDBC interfaces). -->
         <dependency>
             <groupId>org.postgresql</groupId>

@@ -7,11 +7,11 @@ import { Account, ApiService, Payment } from '../../core/api.service';
 import { ErrorMessage } from '../../shared/error-message';
 
 /**
- * Transfers between the customer's own accounts (Phase 9: token relay only allows own accounts;
- * transfers to other customers come with Phase 10).
+ * Transfers from one of the customer's accounts to ANY account number: their own, or another
+ * customer's (Phase 10: payment-service credits the recipient with its own Client Credentials token).
  *
- * The form only offers the customer's own accounts, but that's convenience: payment-service
- * relays the token, and account-service refuses any account that isn't the caller's.
+ * The "From" list only offers the customer's own accounts, but that's convenience: the debit
+ * uses the customer's token, and account-service refuses any source account that isn't theirs.
  */
 @Component({
   selector: 'app-payments-page',
@@ -30,9 +30,11 @@ export class PaymentsPage implements OnInit {
   protected readonly lastPayment = signal<Payment | null>(null);
 
   protected readonly activeAccounts = computed(() => this.accounts().filter((a) => a.status === 'ACTIVE'));
+  /** For the history: "own account" vs "someone else's". */
+  protected readonly ownNumbers = computed(() => new Set(this.accounts().map((a) => a.accountNumber)));
 
   protected sourceAccountId = '';
-  protected targetAccountId = '';
+  protected targetAccountNumber = '';
   protected amount: number | null = null;
   protected description = '';
 
@@ -46,7 +48,7 @@ export class PaymentsPage implements OnInit {
   }
 
   protected transfer(): void {
-    if (!this.sourceAccountId || !this.targetAccountId || !this.amount) {
+    if (!this.sourceAccountId || !this.targetAccountNumber || !this.amount) {
       return;
     }
     this.busy.set(true);
@@ -55,7 +57,7 @@ export class PaymentsPage implements OnInit {
     this.api
       .transfer({
         sourceAccountId: this.sourceAccountId,
-        targetAccountId: this.targetAccountId,
+        targetAccountNumber: this.targetAccountNumber.trim(),
         amount: this.amount,
         description: this.description,
       })
@@ -64,6 +66,7 @@ export class PaymentsPage implements OnInit {
           this.busy.set(false);
           this.lastPayment.set(payment);
           this.amount = null;
+          this.targetAccountNumber = '';
           this.description = '';
           this.load();
         },

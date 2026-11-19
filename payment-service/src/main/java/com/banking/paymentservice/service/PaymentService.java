@@ -24,6 +24,12 @@ import java.util.UUID;
 /**
  * Orchestrates a transfer: validate both accounts, debit the source, credit the target.
  *
+ * <p>Phase 10, two identities in one flow:
+ * <pre>
+ *   read source, debit source      customer's token   account-service: "is it Alice's account?"
+ *   find recipient, credit, refund payment-service's   account-service: "may this APPLICATION credit?"
+ * </pre>
+ *
  * <p>Why this class is NOT {@code @Transactional}: the money moves in ANOTHER service's
  * database. No local transaction can make "debit in account_db + credit in account_db +
  * record in payment_db" atomic. Holding a DB transaction open while waiting on HTTP would
@@ -59,12 +65,12 @@ public class PaymentService {
     public PaymentResponse transfer(String payerId, TransferRequest request) {
         // Record the intent FIRST. If anything later crashes, there is a trace to investigate.
         Payment payment = repository.save(new Payment(payerId, request.sourceAccountId(),
-                request.targetAccountId(), request.amount(), request.description()));
+                request.targetAccountNumber(), request.amount(), request.description()));
 
         payment = execute(payment);
 
         audit.info("payment={} payer={} {} -> {} amount={} {} status={} code={}",
-                payment.getId(), payerId, payment.getSourceAccountId(), payment.getTargetAccountId(),
+                payment.getId(), payerId, payment.getSourceAccountId(), payment.getTargetAccountNumber(),
                 payment.getAmount(), payment.getCurrency(), payment.getStatus(), payment.getFailureCode());
 
         PaymentResponse response = PaymentMapper.toResponse(payment);
@@ -80,22 +86,25 @@ public class PaymentService {
         AccountView source;
         AccountView target;
         try {
-            source = accounts.getAccount(payment.getSourceAccountId());
+            // Customer's token: 404 also means "not yours" (account-service checks ownership).
+            source = accounts.getOwnAccount(payment.getSourceAccountId());
         } catch (AccountRejectedException ex) {
-            // 404 also means "not yours": account-service checked ownership with the relayed token.
             return reject(payment, ex.isNotFound() ? "SOURCE_ACCOUNT_NOT_FOUND" : ex.getCode(), ex.getMessage());
         } catch (AccountServiceUnavailableException ex) {
             return fail(payment, ex);
         }
         try {
-            target = accounts.getAccount(payment.getTargetAccountId());
+            // Service token (Phase 10): the recipient may be ANOTHER customer's account.
+            target = accounts.findRecipient(payment.getTargetAccountNumber());
         } catch (AccountRejectedException ex) {
-            // With token relay, "not found" includes OTHER customers' accounts. See Phase 10.
             return reject(payment, ex.isNotFound() ? "TARGET_ACCOUNT_NOT_FOUND" : ex.getCode(), ex.getMessage());
         } catch (AccountServiceUnavailableException ex) {
             return fail(payment, ex);
         }
 
+        if (source.id().equals(target.id())) {
+            return reject(payment, "SAME_ACCOUNT", "Source and target account are the same");
+        }
         if (!source.currency().equals(target.currency())) {
             return reject(payment, "CURRENCY_MISMATCH", "Source account is in %s, target account is in %s"
                     .formatted(source.currency(), target.currency()));
@@ -104,11 +113,11 @@ public class PaymentService {
             // Checked up front because a failing credit would force a refund later.
             // The source's status and balance are NOT pre-checked: the withdraw itself enforces them
             // atomically in account-service, which is the only reliable place to do it.
-            return reject(payment, "TARGET_ACCOUNT_NOT_ACTIVE", "Target account is " + target.status());
+            return reject(payment, "TARGET_ACCOUNT_NOT_ACTIVE", "Target account cannot receive payments");
         }
-        payment.currencyConfirmed(source.currency());
+        payment.accountsResolved(target.id(), source.currency());
 
-        // ---- Step 2: debit the source ---------------------------------------------------------
+        // ---- Step 2: debit the source (customer's token = the customer's consent) --------------
         try {
             accounts.debit(payment.getSourceAccountId(), payment.getAmount());
         } catch (AccountRejectedException ex) {
@@ -124,9 +133,9 @@ public class PaymentService {
         payment.markDebited();
         payment = repository.save(payment);   // the "money is in flight" checkpoint
 
-        // ---- Step 3: credit the target --------------------------------------------------------
+        // ---- Step 3: credit the target (service token) ------------------------------------------
         try {
-            accounts.credit(payment.getTargetAccountId(), payment.getAmount());
+            accounts.credit(payment.getTargetAccountId(), payment.getAmount(), payment.getId());
             payment.complete();
             return repository.save(payment);
         } catch (AccountServiceUnavailableException ex) {
@@ -147,7 +156,8 @@ public class PaymentService {
      */
     private Payment compensate(Payment payment, String creditFailureCode, String creditFailure) {
         try {
-            accounts.credit(payment.getSourceAccountId(), payment.getAmount());
+            // Service token: works even if the customer's token expired in the meantime.
+            accounts.credit(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
             payment.reverse(creditFailureCode,
                     "Credit to target failed (%s); the amount was returned to the source account".formatted(creditFailure));
             return repository.save(payment);

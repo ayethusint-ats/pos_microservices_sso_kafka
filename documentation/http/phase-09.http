@@ -1,4 +1,6 @@
 ### Phase 9: transfers. payment-service calls account-service over REST (token relay).
+### NOTE: since Phase 10 the request takes "targetAccountNumber" (10 digits) instead of
+### "targetAccountId". This file documents Phase 9 as it was; use phase-10.http against current code.
 ### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|bob|sam> 2>/dev/null
 
 @gw = http://localhost:8080

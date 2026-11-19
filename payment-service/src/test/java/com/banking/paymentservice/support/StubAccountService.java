@@ -21,6 +21,9 @@ import java.util.concurrent.Executors;
  * <p>Because it's a real socket, the tests exercise the real HTTP client: real timeouts,
  * real JSON, real headers. Every request is recorded, so tests can assert what payment-service
  * sent (which calls, in what order, with which bearer token).
+ *
+ * <p>Phase 10: it also plays Keycloak's token endpoint ({@code POST /token}), handing out
+ * {@value #SERVICE_TOKEN} for the client_credentials grant.
  */
 public final class StubAccountService implements AutoCloseable {
 
@@ -30,8 +33,15 @@ public final class StubAccountService implements AutoCloseable {
         }
     }
 
-    private record Reply(int status, String body, Duration delay) {
+    /** {@code requiredToken}: if set, other bearer tokens get 404, like account-service's ownership check. */
+    private record Reply(int status, String body, Duration delay, String requiredToken) {
+        Reply(int status, String body, Duration delay) {
+            this(status, body, delay, null);
+        }
     }
+
+    public static final String TOKEN_PATH = "/token";
+    public static final String SERVICE_TOKEN = "service-access-token";
 
     private final HttpServer server;
     private final Map<String, Reply> replies = new ConcurrentHashMap<>();
@@ -59,17 +69,55 @@ public final class StubAccountService implements AutoCloseable {
     public void reset() {
         replies.clear();
         requests.clear();
+        reply("POST", TOKEN_PATH, 200, """
+                {"access_token":"%s","token_type":"Bearer","expires_in":300}""".formatted(SERVICE_TOKEN));
     }
 
-    /** An account that exists for the caller; withdraw and deposit on it succeed by default. */
+    public String tokenUri() {
+        return baseUrl() + TOKEN_PATH;
+    }
+
+    /** Keycloak refuses the client (wrong secret, disabled client...). */
+    public void tokenEndpointRefuses() {
+        reply("POST", TOKEN_PATH, 401, """
+                {"error":"invalid_client","error_description":"Invalid client credentials"}""");
+    }
+
+    /** Requests to Keycloak's token endpoint. */
+    public long tokenRequests() {
+        return requests.stream().filter(r -> r.path().equals(TOKEN_PATH)).count();
+    }
+
+    /** Requests to account-service only (token requests excluded). */
+    public List<Recorded> accountRequests() {
+        return requests.stream().filter(r -> !r.path().equals(TOKEN_PATH)).toList();
+    }
+
+    /** An account that exists for ANY caller; withdraw and deposit on it succeed by default. */
     public void account(UUID id, String currency, String status) {
+        account(id, currency, status, null);
+    }
+
+    /** An account visible only with the owner's token (others get 404, as from account-service). */
+    public void account(UUID id, String currency, String status, String ownerToken) {
         String json = """
                 {"id":"%s","accountNumber":"1234567890","ownerId":"someone","type":"SAVINGS",
                  "currency":"%s","balance":1000.00,"status":"%s","createdAt":"2026-01-01T00:00:00Z"}"""
                 .formatted(id, currency, status);
-        reply("GET", "/api/accounts/" + id, 200, json);
-        reply("POST", "/api/accounts/" + id + "/withdraw", 200, json);
-        reply("POST", "/api/accounts/" + id + "/deposit", 200, json);
+        for (String key : new String[]{"GET /api/accounts/" + id, "POST /api/accounts/" + id + "/withdraw",
+                "POST /api/accounts/" + id + "/deposit"}) {
+            replies.put(key, new Reply(200, json, Duration.ZERO, ownerToken));
+        }
+        reply("POST", "/internal/accounts/" + id + "/credit", 200, json);   // refunds (service token)
+    }
+
+    /** Any customer's account as the internal API shows it (no owner, no balance). */
+    public void recipient(UUID id, String accountNumber, String currency, String status) {
+        String json = """
+                {"id":"%s","accountNumber":"%s","currency":"%s","status":"%s"}"""
+                .formatted(id, accountNumber, currency, status);
+        reply("GET", "/internal/accounts/by-number/" + accountNumber, 200, json);
+        reply("POST", "/internal/accounts/" + id + "/credit", 200, json);
     }
 
     /** An RFC 9457 error like account-service's GlobalExceptionHandler produces. */
@@ -93,8 +141,9 @@ public final class StubAccountService implements AutoCloseable {
         return List.copyOf(requests);
     }
 
+    /** account-service calls as "METHOD path" (token requests excluded). */
     public List<String> calls() {
-        return requests.stream().map(Recorded::call).toList();
+        return accountRequests().stream().map(Recorded::call).toList();
     }
 
     @Override
@@ -108,8 +157,13 @@ public final class StubAccountService implements AutoCloseable {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         requests.add(new Recorded(method, path, exchange.getRequestHeaders().getFirst("Authorization"), body));
 
-        Reply reply = replies.getOrDefault(method + " " + path, new Reply(404,
-                "{\"title\":\"Resource not found\",\"status\":404,\"detail\":\"Account not found\"}", Duration.ZERO));
+        Reply notFound = new Reply(404,
+                "{\"title\":\"Resource not found\",\"status\":404,\"detail\":\"Account not found\"}", Duration.ZERO);
+        Reply reply = replies.getOrDefault(method + " " + path, notFound);
+        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+        if (reply.requiredToken() != null && !("Bearer " + reply.requiredToken()).equals(authorization)) {
+            reply = notFound;
+        }
         if (!reply.delay().isZero()) {
             try {
                 Thread.sleep(reply.delay());
@@ -118,8 +172,13 @@ public final class StubAccountService implements AutoCloseable {
             }
         }
         byte[] bytes = reply.body().getBytes(StandardCharsets.UTF_8);
+        boolean tokenEndpoint = path.equals(TOKEN_PATH);
         exchange.getResponseHeaders().add("Content-Type",
-                reply.status() >= 400 ? "application/problem+json" : "application/json");
+                reply.status() >= 400 && !tokenEndpoint ? "application/problem+json" : "application/json");
+        if (reply.status() == 401 && !tokenEndpoint) {
+            // Like Spring Security's resource server (RFC 6750).
+            exchange.getResponseHeaders().add("WWW-Authenticate", "Bearer error=\"invalid_token\"");
+        }
         try {
             exchange.sendResponseHeaders(reply.status(), bytes.length);
             try (OutputStream out = exchange.getResponseBody()) {
