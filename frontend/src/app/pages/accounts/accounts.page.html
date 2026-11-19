@@ -1,0 +1,62 @@
+<h1>My accounts</h1>
+
+<app-error-message [error]="error()" />
+
+@if (whoAmI(); as me) {
+  <div class="card" data-testid="whoami">
+    <div class="muted">Signed in as (according to user-service, after it validated the token)</div>
+    <strong>{{ me.username }}</strong> · <code>{{ me.subject }}</code>
+    <div class="muted">Token issued to client <code>{{ me.clientId }}</code>, expires {{ me.expiresAt | date: 'mediumTime' }}</div>
+  </div>
+}
+
+<div class="card">
+  @if (loading()) {
+    <p class="muted">Loading accounts…</p>
+  } @else if (accounts().length === 0) {
+    <p class="muted" data-testid="no-accounts">You don't have any accounts yet.</p>
+  } @else {
+    <table data-testid="accounts-table">
+      <thead>
+        <tr>
+          <th>Account number</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th class="num">Balance</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (account of accounts(); track account.id) {
+          <tr>
+            <td><code>{{ account.accountNumber }}</code></td>
+            <td>{{ account.type }}</td>
+            <td>{{ account.status }}</td>
+            <td class="num">{{ account.balance | currency: account.currency }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>
+
+<h2>Open a new account</h2>
+<form class="card" (ngSubmit)="openAccount()">
+  <label>
+    Type
+    <select name="type" [(ngModel)]="newType">
+      <option value="SAVINGS">Savings</option>
+      <option value="CHECKING">Checking</option>
+    </select>
+  </label>
+  <label>
+    Currency
+    <select name="currency" [(ngModel)]="newCurrency">
+      <option value="THB">THB</option>
+      <option value="USD">USD</option>
+      <option value="EUR">EUR</option>
+    </select>
+  </label>
+  <button type="submit" [disabled]="opening()" data-testid="open-account">
+    {{ opening() ? 'Opening…' : 'Open account' }}
+  </button>
+</form>

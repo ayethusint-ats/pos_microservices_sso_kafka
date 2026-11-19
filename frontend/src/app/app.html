@@ -1,0 +1,30 @@
+<header class="topbar">
+  <a class="brand" routerLink="/">Modern Bank</a>
+
+  @if (auth.isAuthenticated()) {
+    <nav aria-label="Main">
+      <a routerLink="/accounts" routerLinkActive="active">Accounts</a>
+      <a routerLink="/token" routerLinkActive="active">Token</a>
+      <!-- Hidden for non-admins as a convenience only: the gateway enforces ADMIN. -->
+      @if (auth.hasRole('ADMIN')) {
+        <a routerLink="/admin" routerLinkActive="active">Admin</a>
+      }
+    </nav>
+  }
+
+  <div class="session">
+    @if (auth.isAuthenticated()) {
+      <span class="user" data-testid="current-user">{{ auth.username() }}</span>
+      @for (role of auth.roles(); track role) {
+        <span class="chip">{{ role }}</span>
+      }
+      <button type="button" class="secondary" (click)="auth.logout()" data-testid="logout">Log out</button>
+    } @else {
+      <button type="button" (click)="auth.login()" data-testid="login">Log in</button>
+    }
+  </div>
+</header>
+
+<main>
+  <router-outlet />
+</main>

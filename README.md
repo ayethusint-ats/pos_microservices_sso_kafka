@@ -12,6 +12,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 4 | Keycloak and centralized authentication | [documentation/04-keycloak-centralized-authentication.md](documentation/04-keycloak-centralized-authentication.md) |
 | 5 | Spring Security and JWT validation | [documentation/05-spring-security-jwt-validation.md](documentation/05-spring-security-jwt-validation.md) |
 | 6 | Spring Cloud Gateway | [documentation/06-spring-cloud-gateway.md](documentation/06-spring-cloud-gateway.md) |
+| 7 | Angular login, logout and token management | [documentation/07-angular-authentication.md](documentation/07-angular-authentication.md) |
 
 ## Layout
 
@@ -20,7 +21,7 @@ banking-platform/
 ├── pom.xml                  # Root aggregator: pins Spring Boot + Spring Cloud versions
 ├── docker-compose.yml       # Local infrastructure (PostgreSQL now; more each phase)
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
-├── frontend/                # Angular SPA (Phase 7)
+├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
 ├── account-service/         # Accounts and balances (Phase 2)
@@ -39,7 +40,7 @@ banking-platform/
 - JDK 21 or newer (code targets Java 21)
 - Maven 3.9+
 - Docker with Docker Compose v2
-- Node.js LTS (for Angular, Phase 7)
+- Node.js 22.22+, 24.15+ or 26+ (Angular 22)
 
 ## Run
 
@@ -52,4 +53,5 @@ mvn verify                              # build all services and run tests (need
 mvn -pl user-service spring-boot:run    # :8081
 mvn -pl account-service spring-boot:run # :8082
 mvn -pl api-gateway spring-boot:run     # :8080  ← clients use this one
+cd frontend && npm install && npm start # http://localhost:4200
 ```
