@@ -1,0 +1,75 @@
+### Phase 2 requests. Run them from VS Code with the "REST Client" extension
+### (humao.rest-client) or IntelliJ's HTTP client. Requests run top to bottom and reuse variables.
+
+@user = http://localhost:8081
+@account = http://localhost:8082
+@kcId = 7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c
+
+### Create customer
+# @name createCustomer
+POST {{user}}/api/customers
+Content-Type: application/json
+
+{
+  "keycloakUserId": "{{kcId}}",
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "email": "jane@example.com",
+  "phoneNumber": "+66 81 234 5678",
+  "address": { "street": "1 Silom Rd", "city": "Bangkok", "postalCode": "10500", "country": "TH" }
+}
+
+### Get customer by id
+GET {{user}}/api/customers/{{createCustomer.response.body.id}}
+
+### Get customer by Keycloak identity
+GET {{user}}/api/customers/by-identity/{{kcId}}
+
+### List customers (paged)
+GET {{user}}/api/customers?page=0&size=10&sort=lastName,asc
+
+### Update customer
+PUT {{user}}/api/customers/{{createCustomer.response.body.id}}
+Content-Type: application/json
+
+{
+  "firstName": "Jane",
+  "lastName": "Doe-Smith",
+  "email": "jane@example.com",
+  "phoneNumber": "+66 81 234 5678",
+  "address": { "street": "99 Sathorn Rd", "city": "Bangkok", "postalCode": "10120", "country": "TH" }
+}
+
+### Open account
+# @name openAccount
+POST {{account}}/api/accounts
+Content-Type: application/json
+
+{ "ownerId": "{{kcId}}", "type": "SAVINGS", "currency": "THB" }
+
+### Deposit
+POST {{account}}/api/accounts/{{openAccount.response.body.id}}/deposit
+Content-Type: application/json
+
+{ "amount": 5000.00 }
+
+### Withdraw
+POST {{account}}/api/accounts/{{openAccount.response.body.id}}/withdraw
+Content-Type: application/json
+
+{ "amount": 1200.50 }
+
+### Withdraw too much: 422 INSUFFICIENT_FUNDS
+POST {{account}}/api/accounts/{{openAccount.response.body.id}}/withdraw
+Content-Type: application/json
+
+{ "amount": 999999.00 }
+
+### Balance
+GET {{account}}/api/accounts/{{openAccount.response.body.id}}/balance
+
+### Accounts of an owner
+GET {{account}}/api/accounts?ownerId={{kcId}}
+
+### Delete customer
+DELETE {{user}}/api/customers/{{createCustomer.response.body.id}}

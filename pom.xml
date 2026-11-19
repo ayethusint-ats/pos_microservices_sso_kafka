@@ -36,12 +36,14 @@
         <java.version>21</java.version>
         <!-- Spring Cloud 2025.0.x ("Northfields") is the release train built for Spring Boot 3.5.x. -->
         <spring-cloud.version>2025.0.3</spring-cloud.version>
+        <!-- Empty default so "@{argLine}" in surefire always resolves (tools like JaCoCo append to it). -->
+        <argLine></argLine>
     </properties>
 
     <!-- Services are added here as each phase creates them. -->
     <modules>
-        <!-- Phase 2: <module>user-service</module> -->
-        <!-- Phase 2: <module>account-service</module> -->
+        <module>user-service</module>
+        <module>account-service</module>
         <!-- Phase 6: <module>api-gateway</module> -->
         <!-- Phase 9: <module>payment-service</module> -->
         <!-- Phase 11: <module>transaction-service</module> -->
@@ -62,7 +64,35 @@
     </dependencyManagement>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!--
+                  JDK 21+ warns when a library loads a Java agent at runtime, and future JDKs
+                  will forbid it. Mockito needs its agent for inline mocks, so we load it
+                  explicitly at JVM start, as the Mockito docs recommend.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -Xshare:off</argLine>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
+            <!-- Defines a property with each dependency's jar path, e.g. ${org.mockito:mockito-core:jar}. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- Fail fast with a clear message if the build toolchain is too old. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -7,6 +7,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | Phase | Topic | Doc |
 |---|---|---|
 | 1 | System architecture and project setup | [documentation/01-system-architecture.md](documentation/01-system-architecture.md) |
+| 2 | User Service and Account Service | [documentation/02-user-and-account-services.md](documentation/02-user-and-account-services.md) |
 
 ## Layout
 
@@ -38,5 +39,7 @@ banking-platform/
 ## Build
 
 ```bash
-mvn -q validate      # checks toolchain versions
+mvn verify                              # build all services and run tests
+mvn -pl user-service spring-boot:run    # http://localhost:8081
+mvn -pl account-service spring-boot:run # http://localhost:8082
 ```

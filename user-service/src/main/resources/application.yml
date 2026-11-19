@@ -1,0 +1,37 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+
+  # Phase 2: in-memory H2 in PostgreSQL compatibility mode.
+  # Phase 3 replaces this with a real PostgreSQL database owned only by this service.
+  datasource:
+    url: jdbc:h2:mem:user_db;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+
+  jpa:
+    # Phase 2 only: Hibernate creates tables from the entities at startup.
+    # Phase 3 switches to Flyway migrations and `validate`.
+    hibernate:
+      ddl-auto: create-drop
+    # Don't keep the DB session open while JSON is rendered: avoids hidden
+    # lazy-loading queries outside the service layer.
+    open-in-view: false
+
+  h2:
+    console:
+      enabled: true   # http://localhost:8081/h2-console  (JDBC URL above, user "sa")
+
+  data:
+    web:
+      pageable:
+        max-page-size: 100   # caps ?size=... so a client cannot request a million rows
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
