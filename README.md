@@ -9,6 +9,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 1 | System architecture and project setup | [documentation/01-system-architecture.md](documentation/01-system-architecture.md) |
 | 2 | User Service and Account Service | [documentation/02-user-and-account-services.md](documentation/02-user-and-account-services.md) |
 | 3 | PostgreSQL and database-per-service | [documentation/03-postgresql-database-per-service.md](documentation/03-postgresql-database-per-service.md) |
+| 4 | Keycloak and centralized authentication | [documentation/04-keycloak-centralized-authentication.md](documentation/04-keycloak-centralized-authentication.md) |
 
 ## Layout
 
@@ -25,7 +26,7 @@ banking-platform/
 ├── transaction-service/     # Transaction history from Kafka (Phase 11)
 ├── notification-service/    # Simulated e-mails from Kafka (Phase 11)
 ├── infrastructure/
-│   ├── keycloak/            # Realm export (Phase 4)
+│   ├── keycloak/            # Realm as code + PKCE login script (Phase 4)
 │   ├── postgres/init/       # Creates one database + role per service (Phase 3)
 │   └── kafka/               # Topic setup (Phase 11)
 └── documentation/
@@ -42,7 +43,8 @@ banking-platform/
 
 ```bash
 cp .env.example .env                    # first time: then set real passwords in .env
-docker compose up -d                    # PostgreSQL on localhost:5433
+docker compose up -d                    # PostgreSQL :5433, Keycloak :8180
+./infrastructure/keycloak/pkce-login.sh alice   # log in, print tokens
 mvn verify                              # build all services and run tests (needs Docker)
 mvn -pl user-service spring-boot:run    # http://localhost:8081
 mvn -pl account-service spring-boot:run # http://localhost:8082

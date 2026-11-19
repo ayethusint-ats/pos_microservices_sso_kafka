@@ -24,6 +24,7 @@ services:
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:?set ACCOUNT_DB_PASSWORD in .env}
       PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?set PAYMENT_DB_PASSWORD in .env}
       TRANSACTION_DB_PASSWORD: ${TRANSACTION_DB_PASSWORD:?set TRANSACTION_DB_PASSWORD in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
     ports:
       # host:container. The host port is 5433 by default so it doesn't clash with a locally
       # installed PostgreSQL on 5432.
@@ -36,6 +37,49 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  # Identity Provider: login, tokens, users, roles. Our services never see a password.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    container_name: banking-keycloak
+    # start-dev: HTTP allowed, theme caching off. For learning only; production uses `start`
+    # with TLS and an optimized build.
+    # --import-realm: imports every *.json in /opt/keycloak/data/import at startup,
+    # but SKIPS a realm that already exists (so edits to the JSON need a re-import, see docs).
+    command: ["start-dev", "--import-realm"]
+    environment:
+      # One-time admin for the master realm (admin console).
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      # Keycloak stores its data in its own Postgres database (not the dev H2 file).
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db   # "postgres" = Compose service name (Docker DNS)
+      KC_DB_USERNAME: keycloak_svc
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+      # Same port inside and outside the container keeps URLs identical everywhere.
+      KC_HTTP_PORT: 8180
+      # Fixed public URL: tokens always carry iss=http://localhost:8180/realms/banking,
+      # no matter which network address a request came in on.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HEALTH_ENABLED: "true"         # /health/ready on the management port 9000
+      # Read by ${...} placeholders in the realm JSON, so no secret is stored in git.
+      PAYMENT_SERVICE_CLIENT_SECRET: ${PAYMENT_SERVICE_CLIENT_SECRET:?set PAYMENT_SERVICE_CLIENT_SECRET in .env}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:?set DEMO_USER_PASSWORD in .env}
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./infrastructure/keycloak/realm:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy   # wait for the DB healthcheck, not just container start
+    healthcheck:
+      # The image has no curl, so use bash's built-in /dev/tcp to call the readiness endpoint.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

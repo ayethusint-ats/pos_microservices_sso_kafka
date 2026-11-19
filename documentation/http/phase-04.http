@@ -1,0 +1,46 @@
+### Phase 4: Keycloak endpoints (VS Code "REST Client" extension).
+### The Authorization Code + PKCE login needs a browser-style form post; use
+###   ./infrastructure/keycloak/pkce-login.sh alice
+### and paste the printed access token into @accessToken below.
+
+@kc = http://localhost:8180
+@realm = {{kc}}/realms/banking
+@oidc = {{realm}}/protocol/openid-connect
+@accessToken = paste-access-token-here
+@refreshToken = paste-refresh-token-here
+@paymentSecret = paste-PAYMENT_SERVICE_CLIENT_SECRET-from-.env
+
+### OIDC discovery: everything a client needs to know about this Identity Provider
+GET {{realm}}/.well-known/openid-configuration
+
+### JWKS: public keys used to verify token signatures (fetched by gateway and services)
+GET {{oidc}}/certs
+
+### UserInfo: profile claims for the token's user (requires scope openid)
+GET {{oidc}}/userinfo
+Authorization: Bearer {{accessToken}}
+
+### Refresh: new access token + new refresh token (the old one is now invalid: rotation)
+POST {{oidc}}/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&client_id=banking-frontend&refresh_token={{refreshToken}}
+
+### Logout: ends the SSO session (all refresh tokens of that session stop working)
+POST {{oidc}}/logout
+Content-Type: application/x-www-form-urlencoded
+
+client_id=banking-frontend&refresh_token={{refreshToken}}
+
+### Client Credentials: payment-service gets a token AS ITSELF (no user involved)
+# @name serviceToken
+POST {{oidc}}/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=payment-service&client_secret={{paymentSecret}}
+
+### Password grant: deliberately disabled (expect unauthorized_client)
+POST {{oidc}}/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=banking-frontend&username=alice&password=whatever

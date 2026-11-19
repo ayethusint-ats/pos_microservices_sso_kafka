@@ -1,0 +1,148 @@
+{
+  "realm": "banking",
+  "displayName": "Modern Bank",
+  "enabled": true,
+
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "passwordPolicy": "length(12) and notUsername and notEmail",
+
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "permanentLockout": false,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+
+  "roles": {
+    "realm": [
+      { "name": "CUSTOMER", "description": "Bank customer: own profile, own accounts, own transfers" },
+      { "name": "SUPPORT",  "description": "Support agent: read-only access to customer data, cannot move money" },
+      { "name": "ADMIN",    "description": "Administrator: manage users and accounts" }
+    ]
+  },
+
+  "clients": [
+    {
+      "clientId": "banking-frontend",
+      "name": "Banking Angular SPA",
+      "description": "Public client: runs in the browser, so it cannot keep a secret. Uses Authorization Code + PKCE.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["http://localhost:4200/*"],
+      "webOrigins": ["http://localhost:4200"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:4200/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-banking-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "banking-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "payment-service",
+      "name": "Payment Service (machine identity)",
+      "description": "Confidential client for service-to-service calls (Client Credentials). Permissions are added in Phase 10.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${PAYMENT_SERVICE_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience-banking-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "banking-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
+  "users": [
+    {
+      "id": "7f3c9a2e-1b4d-4e8a-9c6f-2d5b8e1a0f3c",
+      "username": "alice",
+      "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Customer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_USER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["default-roles-banking", "CUSTOMER"]
+    },
+    {
+      "id": "b0b5e1c2-3d4f-4a6b-8c9d-0e1f2a3b4c5d",
+      "username": "bob",
+      "email": "bob@example.com",
+      "firstName": "Bob",
+      "lastName": "Customer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_USER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["default-roles-banking", "CUSTOMER"]
+    },
+    {
+      "id": "5a3e0f1d-2c4b-4d6e-9f8a-1b2c3d4e5f60",
+      "username": "sam",
+      "email": "sam@example.com",
+      "firstName": "Sam",
+      "lastName": "Support",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_USER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["default-roles-banking", "SUPPORT"]
+    },
+    {
+      "id": "ada0c0de-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "username": "ada",
+      "email": "ada@example.com",
+      "firstName": "Ada",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_USER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["default-roles-banking", "ADMIN"]
+    },
+    {
+      "username": "service-account-payment-service",
+      "enabled": true,
+      "serviceAccountClientId": "payment-service",
+      "realmRoles": ["default-roles-banking"]
+    }
+  ]
+}
