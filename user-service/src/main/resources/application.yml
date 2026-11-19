@@ -5,33 +5,54 @@ spring:
   application:
     name: user-service
 
-  # Phase 2: in-memory H2 in PostgreSQL compatibility mode.
-  # Phase 3 replaces this with a real PostgreSQL database owned only by this service.
+  # Local-dev convenience: read secrets from the git-ignored .env file in the project root.
+  # "optional:" means no error if it's missing. In Docker/Kubernetes (Phases 15-16) the same
+  # names come from real environment variables instead.
+  # Two paths: `mvn -pl user-service spring-boot:run` runs in the module folder (../.env);
+  # `java -jar` from the project root uses .env.
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+
+  # This service connects ONLY to its own database with its own role.
+  # It can't read account_db: the role has no CONNECT privilege there.
   datasource:
-    url: jdbc:h2:mem:user_db;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
-    username: sa
-    password: ""
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:${POSTGRES_PORT:5433}}/user_db
+    username: ${USER_DB_USERNAME:user_svc}
+    password: ${USER_DB_PASSWORD}          # no default: a secret must never live in the code
+    hikari:
+      # Connections per instance. Total across all services and replicas must stay below
+      # Postgres max_connections (default 100).
+      maximum-pool-size: 10
+      pool-name: user-service-pool
 
   jpa:
-    # Phase 2 only: Hibernate creates tables from the entities at startup.
-    # Phase 3 switches to Flyway migrations and `validate`.
     hibernate:
-      ddl-auto: create-drop
-    # Don't keep the DB session open while JSON is rendered: avoids hidden
-    # lazy-loading queries outside the service layer.
+      # Flyway owns the schema. Hibernate only CHECKS at startup that the tables match
+      # the entities, and refuses to start if they don't.
+      ddl-auto: validate
     open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC   # store and read timestamps in UTC regardless of the server's zone
 
-  h2:
-    console:
-      enabled: true   # http://localhost:8081/h2-console  (JDBC URL above, user "sa")
+  flyway:
+    # Runs pending scripts from src/main/resources/db/migration at startup, before JPA.
+    enabled: true
+    locations: classpath:db/migration
 
   data:
     web:
       pageable:
-        max-page-size: 100   # caps ?size=... so a client cannot request a million rows
+        max-page-size: 100
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: always   # shows DB status in /actuator/health (restricted in Phase 5)

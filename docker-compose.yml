@@ -1,0 +1,42 @@
+# Local infrastructure for the Banking Platform.
+# It grows one phase at a time: Postgres now, then Keycloak (Phase 4), Kafka (Phase 11), and so on.
+#
+#   docker compose up -d        start
+#   docker compose ps           status and health
+#   docker compose down         stop (data is kept in the named volume)
+#   docker compose down -v      stop AND delete data (re-runs the init scripts next time)
+#
+# Values like ${POSTGRES_ADMIN_PASSWORD} come from the .env file next to this file.
+# ${VAR:?message} makes Compose refuse to start if the variable is missing.
+
+name: banking-platform
+
+services:
+  postgres:
+    image: postgres:17.12-alpine          # pin an exact version so every machine runs the same one
+    container_name: banking-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?set POSTGRES_ADMIN_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      POSTGRES_DB: postgres
+      # Read by infrastructure/postgres/init/01-create-service-databases.sh
+      USER_DB_PASSWORD: ${USER_DB_PASSWORD:?set USER_DB_PASSWORD in .env}
+      ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:?set ACCOUNT_DB_PASSWORD in .env}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?set PAYMENT_DB_PASSWORD in .env}
+      TRANSACTION_DB_PASSWORD: ${TRANSACTION_DB_PASSWORD:?set TRANSACTION_DB_PASSWORD in .env}
+    ports:
+      # host:container. The host port is 5433 by default so it doesn't clash with a locally
+      # installed PostgreSQL on 5432.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

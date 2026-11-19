@@ -1,10 +1,12 @@
 package com.banking.accountservice.repository;
 
+import com.banking.accountservice.TestcontainersConfiguration;
 import com.banking.accountservice.entity.Account;
 import com.banking.accountservice.entity.AccountType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.math.BigDecimal;
@@ -21,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * have left the bank. With @Version, B's UPDATE matches no row and fails.
  */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)
 class OptimisticLockingTest {
 
     @Autowired

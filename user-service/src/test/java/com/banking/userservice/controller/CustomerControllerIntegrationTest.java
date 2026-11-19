@@ -1,5 +1,6 @@
 package com.banking.userservice.controller;
 
+import com.banking.userservice.TestcontainersConfiguration;
 import com.banking.userservice.repository.CustomerRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -21,10 +23,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration test: full Spring context, real JPA, H2 database, and the real HTTP layer
+ * Integration test: full Spring context, real JPA, real PostgreSQL (Testcontainers), and the real HTTP layer
  * (validation, JSON, exception handler) through MockMvc.
  */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)
 @AutoConfigureMockMvc
 class CustomerControllerIntegrationTest {
 
