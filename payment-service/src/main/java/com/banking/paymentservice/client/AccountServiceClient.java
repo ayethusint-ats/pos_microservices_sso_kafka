@@ -1,5 +1,6 @@
 package com.banking.paymentservice.client;
 
+import com.banking.paymentservice.client.AccountServiceResilience.CallType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -17,6 +18,10 @@ import java.net.UnknownHostException;
 import java.net.http.HttpConnectTimeoutException;
 import java.util.UUID;
 import java.util.function.Supplier;
+
+import static com.banking.paymentservice.client.AccountServiceResilience.CallType.COMPENSATION;
+import static com.banking.paymentservice.client.AccountServiceResilience.CallType.READ;
+import static com.banking.paymentservice.client.AccountServiceResilience.CallType.WRITE;
 
 /**
  * What payment-service may ask of account-service, with HTTP turned into domain-level outcomes.
@@ -48,43 +53,51 @@ public class AccountServiceClient {
     private final AccountApi customerApi;
     private final InternalAccountApi internalApi;
     private final ObjectMapper objectMapper;
+    private final AccountServiceResilience resilience;
 
-    public AccountServiceClient(AccountApi customerApi, InternalAccountApi internalApi, ObjectMapper objectMapper) {
+    public AccountServiceClient(AccountApi customerApi, InternalAccountApi internalApi, ObjectMapper objectMapper,
+                                AccountServiceResilience resilience) {
         this.customerApi = customerApi;
         this.internalApi = internalApi;
         this.objectMapper = objectMapper;
+        this.resilience = resilience;
     }
 
     // ---- with the CUSTOMER's token: account-service checks the account is theirs -------------
 
     /** One of the caller's own accounts (404 if it isn't theirs). */
     public AccountView getOwnAccount(UUID accountId) {
-        return call("GET own account", () -> customerApi.getAccount(accountId));
+        return call("GET own account", READ, () -> customerApi.getAccount(accountId));
     }
 
     /** Take money out of the caller's own account. Only possible with the customer's token: their consent. */
     public AccountView debit(UUID accountId, BigDecimal amount, UUID paymentId) {
-        return call("withdraw", () -> customerApi.withdraw(accountId, new MoneyCommand(amount, paymentId)));
+        return call("withdraw", WRITE, () -> customerApi.withdraw(accountId, new MoneyCommand(amount, paymentId)));
     }
 
     // ---- with payment-service's OWN token (Client Credentials) ---------------------------------
 
     /** Any account, by number. Minimal data: no owner, no balance. */
     public AccountView findRecipient(String accountNumber) {
-        return call("find recipient", () -> internalApi.findByNumber(accountNumber));
+        return call("find recipient", READ, () -> internalApi.findByNumber(accountNumber));
     }
 
     /** Credit any active account: the recipient of a transfer. */
     public AccountView credit(UUID accountId, BigDecimal amount, UUID paymentId) {
-        return call("credit", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, false)));
+        return call("credit", WRITE, () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, false)));
     }
 
     /** Give the money back to the source account of a reversed transfer (event kind REFUND). */
     public AccountView refund(UUID accountId, BigDecimal amount, UUID paymentId) {
-        return call("refund", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, true)));
+        return call("refund", COMPENSATION, () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, true)));
     }
 
-    private <T> T call(String operation, Supplier<T> request) {
+    /** Phase 12: the translated call runs inside retry / circuit breaker / rate limiter / bulkhead. */
+    private <T> T call(String operation, CallType type, Supplier<T> request) {
+        return resilience.execute(operation, type, () -> translated(operation, request));
+    }
+
+    private <T> T translated(String operation, Supplier<T> request) {
         try {
             return request.get();
         } catch (RestClientResponseException ex) {

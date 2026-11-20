@@ -40,10 +40,11 @@ spring:
               uri: ${PAYMENT_SERVICE_URL:http://localhost:8083}
               predicates:
                 - Path=/api/payments/**,/api/admin/payments/**
-              # A transfer is several calls deep (payment → account-service × 4), so it gets a longer
-              # budget than the global 5 s. Must exceed payment-service's own worst case (4 × 2 s).
+              # A transfer is several calls deep (payment → account-service × 4, with retries since
+              # Phase 12), so it gets a longer budget than the global 5 s. Must exceed payment-service's
+              # own worst case (≈ 15.6 s, see payment-service application.yml).
               metadata:
-                response-timeout: 10000   # ms
+                response-timeout: 20000   # ms
             # Phase 11: read models fed by Kafka. They answer from their own data, so they keep
             # working while the services that produce the events are down.
             - id: transaction-service

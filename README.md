@@ -17,6 +17,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 9 | Service-to-service communication over REST | [documentation/09-service-to-service-rest.md](documentation/09-service-to-service-rest.md) |
 | 10 | Client Credentials: a service's own identity | [documentation/10-client-credentials.md](documentation/10-client-credentials.md) |
 | 11 | Event-driven communication with Kafka | [documentation/11-kafka-event-driven.md](documentation/11-kafka-event-driven.md) |
+| 12 | Resilience: circuit breaker, retry, bulkhead, rate limiter | [documentation/12-resilience4j.md](documentation/12-resilience4j.md) |
 
 ## Layout
 

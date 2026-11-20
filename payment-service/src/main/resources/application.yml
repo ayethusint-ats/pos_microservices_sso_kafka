@@ -78,18 +78,79 @@ banking:
       # Direct to the service, NOT through the public gateway (no second rate limit, no CORS, one hop less).
       base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
       connect-timeout: 1s
-      # Timeout budget: a transfer makes up to 4 sequential calls (2 reads, debit, credit/refund),
-      # plus at most one token request to Keycloak (cached for ~5 min).
-      # 4 × 2 s = 8 s must stay below the gateway's response timeout for /api/payments (10 s),
-      # otherwise the client sees 504 while the transfer is still running.
+      # Timeout budget (Phase 12, with retries), worst case for one transfer:
+      #   2 reads × (2 attempts × 2 s + 0.1 s)          8.2 s
+      #   debit 2 s + credit 2 s (no retry on timeout)   4.0 s
+      #   refund 2 s + backoff of fast failures ~1.4 s   3.4 s   → ≈ 15.6 s
+      # Must stay below the gateway's response timeout for /api/payments (20 s), otherwise the
+      # client sees 504 while the transfer is still running. An OPEN breaker cuts this to milliseconds.
       read-timeout: 2s
+
+# Phase 12: resilience policy for calls to account-service (see AccountServiceResilience).
+resilience4j:
+  circuitbreaker:
+    instances:
+      accountService:
+        # Judge account-service by its last 10 calls, once there are at least 5.
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50            # ≥ 50 % failures → OPEN
+        slow-call-duration-threshold: 1500ms  # a call slower than this counts as "slow"...
+        slow-call-rate-threshold: 80          # ...and ≥ 80 % slow calls also → OPEN (degraded, not dead)
+        wait-duration-in-open-state: 10s      # fail fast for 10 s, then let a few probes through
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        # Only "no usable answer" is a failure. A business "no" (404/422) is a HEALTHY service.
+        record-exceptions:
+          - com.banking.paymentservice.client.AccountServiceUnavailableException
+        ignore-exceptions:
+          - com.banking.paymentservice.client.AccountRejectedException
+          - io.github.resilience4j.bulkhead.BulkheadFullException
+          - io.github.resilience4j.ratelimiter.RequestNotPermitted
+        register-health-indicator: true
+        # An OPEN breaker means ACCOUNT-service is unhealthy, not this service. If it turned
+        # /actuator/health DOWN, Kubernetes would restart payment-service for someone else's outage.
+        allow-health-indicator-to-fail: false
+  retry:
+    instances:
+      # Which exceptions are retried: RetryPolicies (code). How often and how long to wait: here.
+      accountServiceRead:
+        max-attempts: 2                       # 1 try + 1 retry
+        wait-duration: 100ms
+      accountServiceWrite:
+        max-attempts: 2                       # only for "certainly not executed"
+        wait-duration: 200ms
+      accountServiceCompensation:
+        max-attempts: 4                       # a refund must try hard: 200 ms, 400 ms, 800 ms
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+  bulkhead:
+    instances:
+      accountService:
+        # At most 25 requests may wait on account-service at once. Without this, a slow
+        # account-service would tie up ALL of payment-service's request threads.
+        max-concurrent-calls: 25
+        max-wait-duration: 50ms
+  ratelimiter:
+    instances:
+      accountService:
+        # Don't let payment-service flood account-service (≈ 25 transfers/s at 4 calls each).
+        limit-for-period: 100
+        limit-refresh-period: 1s
+        timeout-duration: 0                   # over the limit → fail immediately, don't queue
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # health/info are public; the resilience endpoints require an ADMIN token (SecurityConfig).
+        include: health,info,circuitbreakers,circuitbreakerevents,retries,retryevents,bulkheads,ratelimiters,metrics
   endpoint:
     health:
       show-details: when-authorized
       roles: ADMIN
+  health:
+    circuitbreakers:
+      enabled: true

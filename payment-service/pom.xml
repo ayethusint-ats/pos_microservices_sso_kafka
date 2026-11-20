@@ -51,6 +51,14 @@
             <artifactId>spring-kafka</artifactId>
         </dependency>
 
+        <!-- Phase 12: circuit breaker, retry, bulkhead and rate limiter for calls to account-service.
+             Version from the resilience4j BOM that the Spring Cloud BOM imports. Brings Actuator health
+             indicators, endpoints and Micrometer metrics for every configured instance. -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+        </dependency>
+
         <!-- PostgreSQL JDBC driver (only needed at runtime, the code uses JPA/JDBC interfaces). -->
         <dependency>
             <groupId>org.postgresql</groupId>

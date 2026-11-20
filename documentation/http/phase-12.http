@@ -1,0 +1,55 @@
+### Phase 12: Resilience4j in payment-service.
+### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|ada> 2>/dev/null
+### Make account-service HANG (not crash):  kill -STOP $(lsof -ti tcp:8082 -sTCP:LISTEN)
+### Resume it:                              kill -CONT $(lsof -ti tcp:8082 -sTCP:LISTEN)
+
+@gw = http://localhost:8080
+@payment = http://localhost:8083
+@alice = paste-alice-token
+@ada = paste-ada-token
+@aliceAccount = paste-an-alice-account-id
+@bobsNumber = paste-a-bob-account-number
+
+### A transfer. Send it repeatedly while account-service is frozen:
+### the first ones take ~4 s (timeouts + one read retry), then ~16 ms once the breaker is OPEN.
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 1.00 }
+
+### Breaker state, failure rate, buffered and rejected calls (ADMIN)
+GET {{payment}}/actuator/circuitbreakers
+Authorization: Bearer {{ada}}
+
+### State transitions and recent calls of the accountService breaker
+GET {{payment}}/actuator/circuitbreakerevents/accountService
+Authorization: Bearer {{ada}}
+
+### Retry configuration and events
+GET {{payment}}/actuator/retries
+Authorization: Bearer {{ada}}
+
+###
+GET {{payment}}/actuator/retryevents
+Authorization: Bearer {{ada}}
+
+### Bulkhead and rate limiter
+GET {{payment}}/actuator/bulkheads
+Authorization: Bearer {{ada}}
+
+###
+GET {{payment}}/actuator/ratelimiters
+Authorization: Bearer {{ada}}
+
+### Metric: 0 = CLOSED, 1 = OPEN, 2 = HALF_OPEN (per state tag)
+GET {{payment}}/actuator/metrics/resilience4j.circuitbreaker.state
+Authorization: Bearer {{ada}}
+
+### Health stays UP even with the breaker OPEN (details only for ADMIN)
+GET {{payment}}/actuator/health
+Authorization: Bearer {{ada}}
+
+### Customers can't see operational endpoints → 403
+GET {{payment}}/actuator/circuitbreakers
+Authorization: Bearer {{alice}}

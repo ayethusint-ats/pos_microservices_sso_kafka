@@ -2,6 +2,8 @@ package com.banking.paymentservice.controller;
 
 import com.banking.paymentservice.TestcontainersConfiguration;
 import com.banking.paymentservice.client.AccountClientConfig;
+import com.banking.paymentservice.client.AccountServiceResilience;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
 import com.banking.paymentservice.repository.PaymentRepository;
@@ -93,6 +95,9 @@ class PaymentIntegrationTest {
     @Autowired
     private OAuth2AuthorizedClientService authorizedClients;
 
+    @Autowired
+    private CircuitBreakerRegistry circuitBreakers;
+
     /**
      * Where the TEST broker is. Not @Value("${spring.kafka.bootstrap-servers}"): @ServiceConnection
      * doesn't change that property (it would still say localhost:9092, the docker-compose broker),
@@ -112,6 +117,8 @@ class PaymentIntegrationTest {
         accountService.account(CHECKING, "THB", "ACTIVE", ALICE_TOKEN);
         // Each test starts without a cached service token (the cache is an application-wide singleton).
         authorizedClients.removeAuthorizedClient(AccountClientConfig.REGISTRATION_ID, "payment-service");
+        // ...and with a CLOSED circuit breaker (also a singleton: one test's failures must not leak).
+        circuitBreakers.circuitBreaker(AccountServiceResilience.INSTANCE).reset();
         // ... and every account as recipient (internal API, service token).
         accountService.recipient(SAVINGS, SAVINGS_NUMBER, "THB", "ACTIVE");
         accountService.recipient(CHECKING, CHECKING_NUMBER, "THB", "ACTIVE");
@@ -300,6 +307,56 @@ class PaymentIntegrationTest {
         mockMvc.perform(get("/api/admin/payments").param("status", "NEEDS_RECONCILIATION").with(sam()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    // ------------------------------------------------------------------ resilience (Phase 12)
+
+    @Test
+    void readFailureIsRetriedOnceAndTheTransferSucceeds() throws Exception {
+        accountService.failNext("GET", "/api/accounts/" + SAVINGS, 1, 503);
+
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "1.00").andExpect(status().isCreated());
+        assertThat(accountService.calls().stream().filter(("GET /api/accounts/" + SAVINGS)::equals)).hasSize(2);
+    }
+
+    @Test
+    void openBreakerFailsTransfersFastAndOperatorsCanSeeIt() throws Exception {
+        accountService.problem("GET", "/api/accounts/" + SAVINGS, 503, null, "account-service is sick");
+        for (int i = 0; i < 3; i++) {   // 3 transfers × 2 attempts = 6 failures ≥ minimum 5 → OPEN
+            transfer(alice(), SAVINGS, BOBS_NUMBER, "1.00").andExpect(status().isServiceUnavailable());
+        }
+        int callsSoFar = accountService.calls().size();
+
+        long start = System.nanoTime();
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "1.00")
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "5"))
+                .andExpect(jsonPath("$.paymentStatus").value("FAILED"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("circuit breaker is OPEN")));
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(500));
+        assertThat(accountService.calls()).hasSize(callsSoFar);       // not even attempted
+
+        // Operators (ADMIN) see the state; customers don't.
+        mockMvc.perform(get("/actuator/circuitbreakers").with(ada()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.circuitBreakers.accountService.state").value("OPEN"));
+        mockMvc.perform(get("/actuator/circuitbreakers").with(alice())).andExpect(status().isForbidden());
+        // payment-service itself is healthy: an OPEN breaker must not make Kubernetes restart it.
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+        mockMvc.perform(get("/actuator/health").with(ada()))
+                .andExpect(jsonPath("$.components.circuitBreakers.details.accountService.details.state").value("OPEN"));
+    }
+
+    @Test
+    void businessRejectionsDoNotOpenTheBreaker() throws Exception {
+        accountService.problem("POST", "/api/accounts/" + SAVINGS + "/withdraw", 422, "INSUFFICIENT_FUNDS", "no");
+        for (int i = 0; i < 8; i++) {
+            transfer(alice(), SAVINGS, BOBS_NUMBER, "1.00").andExpect(status().isUnprocessableEntity());
+        }
+        assertThat(circuitBreakers.circuitBreaker(AccountServiceResilience.INSTANCE).getState())
+                .isEqualTo(io.github.resilience4j.circuitbreaker.CircuitBreaker.State.CLOSED);
     }
 
     // ------------------------------------------------------------------ validation

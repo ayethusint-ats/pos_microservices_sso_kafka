@@ -45,6 +45,8 @@ public final class StubAccountService implements AutoCloseable {
 
     private final HttpServer server;
     private final Map<String, Reply> replies = new ConcurrentHashMap<>();
+    /** One-shot replies, used before the regular one: "fail twice, then succeed". */
+    private final Map<String, java.util.Queue<Reply>> onceReplies = new ConcurrentHashMap<>();
     private final List<Recorded> requests = new CopyOnWriteArrayList<>();
 
     private StubAccountService() throws IOException {
@@ -68,6 +70,7 @@ public final class StubAccountService implements AutoCloseable {
 
     public void reset() {
         replies.clear();
+        onceReplies.clear();
         requests.clear();
         reply("POST", TOKEN_PATH, 200, """
                 {"access_token":"%s","token_type":"Bearer","expires_in":300}""".formatted(SERVICE_TOKEN));
@@ -127,6 +130,15 @@ public final class StubAccountService implements AutoCloseable {
                 {"type":"about:blank","title":"Error","status":%d,"detail":"%s"%s}""".formatted(status, detail, codeJson));
     }
 
+    /** The next {@code times} requests get this error; later ones get the regular reply. */
+    public void failNext(String method, String path, int times, int status) {
+        java.util.Queue<Reply> queue = onceReplies.computeIfAbsent(method + " " + path,
+                k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+        for (int i = 0; i < times; i++) {
+            queue.add(new Reply(status, "{\"title\":\"Error\",\"status\":%d,\"detail\":\"injected\"}".formatted(status), Duration.ZERO));
+        }
+    }
+
     public void reply(String method, String path, int status, String body) {
         replies.put(method + " " + path, new Reply(status, body, Duration.ZERO));
     }
@@ -159,7 +171,9 @@ public final class StubAccountService implements AutoCloseable {
 
         Reply notFound = new Reply(404,
                 "{\"title\":\"Resource not found\",\"status\":404,\"detail\":\"Account not found\"}", Duration.ZERO);
-        Reply reply = replies.getOrDefault(method + " " + path, notFound);
+        java.util.Queue<Reply> once = onceReplies.get(method + " " + path);
+        Reply oneShot = once == null ? null : once.poll();
+        Reply reply = oneShot != null ? oneShot : replies.getOrDefault(method + " " + path, notFound);
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (reply.requiredToken() != null && !("Bearer " + reply.requiredToken()).equals(authorization)) {
             reply = notFound;

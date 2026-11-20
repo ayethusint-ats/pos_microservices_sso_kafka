@@ -62,6 +62,8 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // Liveness/readiness probes (Docker, Kubernetes) must work without a token.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Phase 12: circuit breaker state, retry events, metrics: operators only.
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
                         // Back office: staff only, whatever the method-level rules say.
                         .requestMatchers("/api/admin/**").hasAnyRole("SUPPORT", "ADMIN")
                         .requestMatchers("/api/**").authenticated()
