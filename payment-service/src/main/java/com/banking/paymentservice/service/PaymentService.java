@@ -8,6 +8,8 @@ import com.banking.paymentservice.dto.PaymentResponse;
 import com.banking.paymentservice.dto.TransferRequest;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
+import com.banking.paymentservice.events.PaymentEvent;
+import com.banking.paymentservice.events.PaymentEventPublisher;
 import com.banking.paymentservice.exception.PaymentNotCompletedException;
 import com.banking.paymentservice.exception.ResourceNotFoundException;
 import com.banking.paymentservice.mapper.PaymentMapper;
@@ -50,10 +52,12 @@ public class PaymentService {
 
     private final PaymentRepository repository;
     private final AccountServiceClient accounts;
+    private final PaymentEventPublisher events;
 
-    public PaymentService(PaymentRepository repository, AccountServiceClient accounts) {
+    public PaymentService(PaymentRepository repository, AccountServiceClient accounts, PaymentEventPublisher events) {
         this.repository = repository;
         this.accounts = accounts;
+        this.events = events;
     }
 
     /**
@@ -72,6 +76,9 @@ public class PaymentService {
         audit.info("payment={} payer={} {} -> {} amount={} {} status={} code={}",
                 payment.getId(), payerId, payment.getSourceAccountId(), payment.getTargetAccountNumber(),
                 payment.getAmount(), payment.getCurrency(), payment.getStatus(), payment.getFailureCode());
+
+        // Phase 11: tell the rest of the bank (notifications now, more later) without calling anyone.
+        events.publish(PaymentEvent.of(payment));
 
         PaymentResponse response = PaymentMapper.toResponse(payment);
         if (payment.getStatus() == PaymentStatus.COMPLETED || payment.getStatus() == PaymentStatus.NEEDS_RECONCILIATION) {
@@ -119,7 +126,7 @@ public class PaymentService {
 
         // ---- Step 2: debit the source (customer's token = the customer's consent) --------------
         try {
-            accounts.debit(payment.getSourceAccountId(), payment.getAmount());
+            accounts.debit(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
         } catch (AccountRejectedException ex) {
             return reject(payment, ex.getCode(), ex.getMessage());       // e.g. INSUFFICIENT_FUNDS
         } catch (AccountServiceUnavailableException ex) {
@@ -157,7 +164,7 @@ public class PaymentService {
     private Payment compensate(Payment payment, String creditFailureCode, String creditFailure) {
         try {
             // Service token: works even if the customer's token expired in the meantime.
-            accounts.credit(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
+            accounts.refund(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
             payment.reverse(creditFailureCode,
                     "Credit to target failed (%s); the amount was returned to the source account".formatted(creditFailure));
             return repository.save(payment);

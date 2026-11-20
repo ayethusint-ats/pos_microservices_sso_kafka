@@ -12,6 +12,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.springframework.boot.autoconfigure.kafka.KafkaConnectionDetails;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
@@ -25,6 +31,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.banking.paymentservice.support.StubAccountService.SERVICE_TOKEN;
@@ -84,6 +92,14 @@ class PaymentIntegrationTest {
 
     @Autowired
     private OAuth2AuthorizedClientService authorizedClients;
+
+    /**
+     * Where the TEST broker is. Not @Value("${spring.kafka.bootstrap-servers}"): @ServiceConnection
+     * doesn't change that property (it would still say localhost:9092, the docker-compose broker),
+     * it provides this bean, which Spring's own Kafka clients use.
+     */
+    @Autowired
+    private KafkaConnectionDetails kafkaConnection;
 
     private MockMvc mockMvc;
 
@@ -150,6 +166,36 @@ class PaymentIntegrationTest {
         transfer(alice(), SAVINGS, CHECKING_NUMBER, "1.00").andExpect(status().isCreated());
 
         assertThat(accountService.tokenRequests()).isEqualTo(1);
+    }
+
+    @Test
+    void outcomeIsPublishedToKafkaKeyedByPayment() throws Exception {
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, String.join(",", kafkaConnection.getBootstrapServers()),
+                ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class))) {
+            String body = transfer(alice(), SAVINGS, BOBS_NUMBER, "7.00").andReturn().getResponse().getContentAsString();
+            String paymentId = objectMapper.readTree(body).path("id").asText();
+
+            consumer.subscribe(List.of("banking.payment-events"));
+            JsonNode event = null;
+            long deadline = System.currentTimeMillis() + 15_000;
+            while (event == null && System.currentTimeMillis() < deadline) {
+                for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(200))) {
+                    if (record.key().equals(paymentId)) {
+                        event = objectMapper.readTree(record.value());
+                    }
+                }
+            }
+            assertThat(event).isNotNull();
+            assertThat(event.path("eventType").asText()).isEqualTo("PAYMENT_COMPLETED");
+            assertThat(event.path("payerId").asText()).isEqualTo(ALICE_ID);
+            assertThat(event.path("targetAccountNumber").asText()).isEqualTo(BOBS_NUMBER);
+        }
+        // The debit carried the payment ID, so account-service labels it TRANSFER_OUT.
+        assertThat(accountService.accountRequests().get(2).body()).contains("\"paymentId\"");
     }
 
     // ------------------------------------------------------------------ refused: nothing moved
@@ -238,7 +284,7 @@ class PaymentIntegrationTest {
         assertThat(accountService.calls()).endsWith(
                 "POST /api/accounts/" + SAVINGS + "/withdraw",
                 "POST /internal/accounts/" + BOBS_ACCOUNT + "/credit",
-                "POST /internal/accounts/" + SAVINGS + "/credit");   // refund
+                "POST /internal/accounts/" + SAVINGS + "/credit");   // refund (body: "refund":true)
     }
 
     @Test

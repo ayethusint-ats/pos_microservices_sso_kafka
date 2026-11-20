@@ -32,8 +32,25 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Phase 11: Kafka producer. Values are JSON strings serialized with the app's own ObjectMapper.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all                    # leader AND in-sync replicas must have it before "sent"
+      properties:
+        enable.idempotence: true   # broker drops duplicates caused by producer retries
+        # Fail fast instead of blocking a request thread for the default 60 s when Kafka is down.
+        max.block.ms: 3000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
 # Phase 5: this service is an OAuth2 Resource Server and trusts tokens from the Keycloak "banking" realm.
 banking:
+  kafka:
+    topics:
+      account-transactions: banking.account-transactions
   security:
     jwt:
       issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}

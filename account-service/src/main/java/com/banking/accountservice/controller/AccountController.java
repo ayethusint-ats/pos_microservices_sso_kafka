@@ -75,6 +75,6 @@ public class AccountController {
     @PostMapping("/{id}/withdraw")
     public AccountResponse withdraw(@CurrentUserId String userId, @PathVariable UUID id,
                                     @Valid @RequestBody MoneyRequest request) {
-        return accountService.withdraw(id, userId, request.amount());
+        return accountService.withdraw(id, userId, request.amount(), request.paymentId());
     }
 }

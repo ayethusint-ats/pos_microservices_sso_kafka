@@ -44,7 +44,16 @@ spring:
               # budget than the global 5 s. Must exceed payment-service's own worst case (4 × 2 s).
               metadata:
                 response-timeout: 10000   # ms
-            # Phase 11+: transaction-service
+            # Phase 11: read models fed by Kafka. They answer from their own data, so they keep
+            # working while the services that produce the events are down.
+            - id: transaction-service
+              uri: ${TRANSACTION_SERVICE_URL:http://localhost:8084}
+              predicates:
+                - Path=/api/transactions/**,/api/admin/transactions/**
+            - id: notification-service
+              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8085}
+              predicates:
+                - Path=/api/notifications/**
 
 banking:
   security:

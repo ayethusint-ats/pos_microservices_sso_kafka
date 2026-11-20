@@ -38,6 +38,19 @@ spring:
         jdbc:
           time_zone: UTC   # store and read timestamps in UTC regardless of the server's zone
 
+  # Phase 11: Kafka producer (same settings as account-service; see its application.yml).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 3000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
   flyway:
     # Runs pending scripts from src/main/resources/db/migration at startup, before JPA.
     enabled: true
@@ -50,6 +63,9 @@ spring:
 
 # Phase 5: this service is an OAuth2 Resource Server and trusts tokens from the Keycloak "banking" realm.
 banking:
+  kafka:
+    topics:
+      customer-events: banking.customer-events
   security:
     jwt:
       issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}

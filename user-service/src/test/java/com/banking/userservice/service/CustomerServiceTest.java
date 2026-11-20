@@ -35,11 +35,14 @@ class CustomerServiceTest {
     @Mock
     private CustomerRepository customerRepository;
 
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher events;
+
     private CustomerService customerService;
 
     @BeforeEach
     void setUp() {
-        customerService = new CustomerService(customerRepository, new CustomerMapper());
+        customerService = new CustomerService(customerRepository, new CustomerMapper(), events);
     }
 
     @Test

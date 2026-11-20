@@ -16,25 +16,26 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 8 | Role-based authorization and ownership | [documentation/08-role-based-authorization.md](documentation/08-role-based-authorization.md) |
 | 9 | Service-to-service communication over REST | [documentation/09-service-to-service-rest.md](documentation/09-service-to-service-rest.md) |
 | 10 | Client Credentials: a service's own identity | [documentation/10-client-credentials.md](documentation/10-client-credentials.md) |
+| 11 | Event-driven communication with Kafka | [documentation/11-kafka-event-driven.md](documentation/11-kafka-event-driven.md) |
 
 ## Layout
 
 ```
 banking-platform/
 ├── pom.xml                  # Root aggregator: pins Spring Boot + Spring Cloud versions
-├── docker-compose.yml       # Local infrastructure (PostgreSQL now; more each phase)
+├── docker-compose.yml       # Local infrastructure: PostgreSQL, Keycloak, Kafka (KRaft)
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
 ├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
 ├── account-service/         # Accounts and balances (Phase 2)
 ├── payment-service/         # Transfers :8083, calls account-service over REST (Phase 9); Saga, idempotency (Phase 13)
-├── transaction-service/     # Transaction history from Kafka (Phase 11)
-├── notification-service/    # Simulated e-mails from Kafka (Phase 11)
+├── transaction-service/     # Statements :8084, built from account events on Kafka (Phase 11)
+├── notification-service/    # Simulated e-mails :8085, driven by Kafka events (Phase 11)
 ├── infrastructure/
 │   ├── keycloak/            # Realm as code + PKCE login script (Phase 4)
 │   ├── postgres/init/       # Creates one database + role per service (Phase 3)
-│   └── kafka/               # Topic setup (Phase 11)
+│   └── kafka/               # Topics as code: create-topics.sh (Phase 11)
 └── documentation/
 ```
 

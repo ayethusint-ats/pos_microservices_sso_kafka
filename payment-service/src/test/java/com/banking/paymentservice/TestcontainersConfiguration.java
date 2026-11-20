@@ -4,9 +4,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
-/** Real PostgreSQL for integration tests. See user-service's copy for the explanation. */
+/** Real PostgreSQL and Kafka for integration tests. See user-service's copy for the explanation. */
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
@@ -15,5 +16,12 @@ public class TestcontainersConfiguration {
     PostgreSQLContainer<?> postgresContainer() {
         return new PostgreSQLContainer<>(DockerImageName.parse("postgres:17.12-alpine"))
                 .withDatabaseName("payment_db");
+    }
+
+    /** Same image as docker-compose. @ServiceConnection sets spring.kafka.bootstrap-servers. */
+    @Bean
+    @ServiceConnection
+    KafkaContainer kafkaContainer() {
+        return new KafkaContainer(DockerImageName.parse("apache/kafka:4.1.1"));
     }
 }

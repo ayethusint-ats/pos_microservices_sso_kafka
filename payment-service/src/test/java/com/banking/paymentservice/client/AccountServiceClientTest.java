@@ -122,7 +122,16 @@ class AccountServiceClientTest {
 
         StubAccountService.Recorded call = stub.accountRequests().getFirst();
         assertThat(call.call()).isEqualTo("POST /internal/accounts/" + BOBS_ACCOUNT + "/credit");
-        assertThat(call.body()).isEqualTo("{\"amount\":12.50,\"paymentId\":\"" + paymentId + "\"}");
+        assertThat(call.body()).isEqualTo("{\"amount\":12.50,\"paymentId\":\"" + paymentId + "\",\"refund\":false}");
+    }
+
+    @Test
+    void refundIsACreditMarkedAsRefund() {
+        stub.recipient(BOBS_ACCOUNT, BOBS_NUMBER, "THB", "ACTIVE");
+
+        client.refund(BOBS_ACCOUNT, BigDecimal.ONE, UUID.randomUUID());
+
+        assertThat(stub.accountRequests().getFirst().body()).endsWith("\"refund\":true}");
     }
 
     @Test
@@ -156,17 +165,18 @@ class AccountServiceClientTest {
     void sendsTheAmountAsJson() {
         stub.account(ACCOUNT, "THB", "ACTIVE");
 
-        client.debit(ACCOUNT, new BigDecimal("12.50"));
+        UUID paymentId = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        client.debit(ACCOUNT, new BigDecimal("12.50"), paymentId);
 
         assertThat(stub.accountRequests().getFirst().call()).isEqualTo("POST /api/accounts/" + ACCOUNT + "/withdraw");
-        assertThat(stub.accountRequests().getFirst().body()).isEqualTo("{\"amount\":12.50}");
+        assertThat(stub.accountRequests().getFirst().body()).isEqualTo("{\"amount\":12.50,\"paymentId\":\"" + paymentId + "\"}");
     }
 
     @Test
     void businessRefusalKeepsAccountServicesErrorCode() {
         stub.problem("POST", "/api/accounts/" + ACCOUNT + "/withdraw", 422, "INSUFFICIENT_FUNDS", "balance 5.00");
 
-        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN))
+        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountRejectedException.class, ex -> {
                     assertThat(ex.getCode()).isEqualTo("INSUFFICIENT_FUNDS");
                     assertThat(ex.getMessage()).isEqualTo("balance 5.00");
@@ -183,7 +193,7 @@ class AccountServiceClientTest {
     void serverErrorMeansOutcomeUnknown() {
         stub.problem("POST", "/api/accounts/" + ACCOUNT + "/withdraw", 500, null, "boom");
 
-        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN))
+        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountServiceUnavailableException.class,
                         ex -> assertThat(ex.isOutcomeUnknown()).isTrue());
     }
@@ -192,7 +202,7 @@ class AccountServiceClientTest {
     void rejectedTokenMeansNothingHappened() {
         stub.problem("POST", "/api/accounts/" + ACCOUNT + "/withdraw", 401, null, "token expired");
 
-        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN))
+        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountServiceUnavailableException.class,
                         ex -> assertThat(ex.isOutcomeUnknown()).isFalse());
     }
@@ -203,7 +213,7 @@ class AccountServiceClientTest {
         stub.slowReply("POST", "/api/accounts/" + ACCOUNT + "/withdraw", Duration.ofSeconds(2));
 
         long start = System.nanoTime();
-        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN))
+        assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountServiceUnavailableException.class,
                         ex -> assertThat(ex.isOutcomeUnknown()).isTrue());
         // The request DID reach account-service: it was recorded there. We just never got the answer.
@@ -219,7 +229,7 @@ class AccountServiceClientTest {
         }
         AccountServiceClient unreachable = clientFor("http://localhost:" + closedPort);
 
-        assertThatThrownBy(() -> unreachable.debit(ACCOUNT, BigDecimal.TEN))
+        assertThatThrownBy(() -> unreachable.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountServiceUnavailableException.class,
                         ex -> assertThat(ex.isOutcomeUnknown()).isFalse());
     }

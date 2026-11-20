@@ -46,6 +46,6 @@ public class InternalAccountController {
     @PostMapping("/{id}/credit")
     public AccountSummary credit(@CallingClient String clientId, @PathVariable UUID id,
                                  @Valid @RequestBody CreditRequest request) {
-        return accountService.creditForPayment(id, request.amount(), request.paymentId(), clientId);
+        return accountService.creditForPayment(id, request.amount(), request.paymentId(), request.refund(), clientId);
     }
 }

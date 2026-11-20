@@ -1,0 +1,73 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: transaction-service
+
+  # Local-dev convenience: secrets from the git-ignored .env (see user-service for details).
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:${POSTGRES_PORT:5433}}/transaction_db
+    username: ${TRANSACTION_DB_USERNAME:transaction_svc}
+    password: ${TRANSACTION_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      pool-name: transaction-service-pool
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # Phase 11: Kafka CONSUMER.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: transaction-service
+      # A NEW consumer group starts at the oldest retained event, so a fresh transaction-service
+      # builds the complete history. Afterwards it resumes from its committed offsets.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    # Only used to forward poison messages to the dead-letter topic.
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        max.block.ms: 5000   # never stall a partition for the default 60 s on a missing DLT
+    listener:
+      concurrency: 3        # one consumer thread per partition (the topic has 3)
+
+banking:
+  kafka:
+    topics:
+      account-transactions: banking.account-transactions
+  security:
+    jwt:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
+      jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/banking/protocol/openid-connect/certs}
+      audience: banking-api
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN

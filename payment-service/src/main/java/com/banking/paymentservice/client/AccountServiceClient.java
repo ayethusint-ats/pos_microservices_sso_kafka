@@ -63,8 +63,8 @@ public class AccountServiceClient {
     }
 
     /** Take money out of the caller's own account. Only possible with the customer's token: their consent. */
-    public AccountView debit(UUID accountId, BigDecimal amount) {
-        return call("withdraw", () -> customerApi.withdraw(accountId, new MoneyCommand(amount)));
+    public AccountView debit(UUID accountId, BigDecimal amount, UUID paymentId) {
+        return call("withdraw", () -> customerApi.withdraw(accountId, new MoneyCommand(amount, paymentId)));
     }
 
     // ---- with payment-service's OWN token (Client Credentials) ---------------------------------
@@ -74,9 +74,14 @@ public class AccountServiceClient {
         return call("find recipient", () -> internalApi.findByNumber(accountNumber));
     }
 
-    /** Credit any active account; also used to refund the source when a transfer is reversed. */
+    /** Credit any active account: the recipient of a transfer. */
     public AccountView credit(UUID accountId, BigDecimal amount, UUID paymentId) {
-        return call("credit", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId)));
+        return call("credit", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, false)));
+    }
+
+    /** Give the money back to the source account of a reversed transfer (event kind REFUND). */
+    public AccountView refund(UUID accountId, BigDecimal amount, UUID paymentId) {
+        return call("refund", () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, true)));
     }
 
     private <T> T call(String operation, Supplier<T> request) {

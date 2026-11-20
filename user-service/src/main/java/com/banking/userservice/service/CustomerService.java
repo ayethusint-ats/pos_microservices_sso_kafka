@@ -12,6 +12,9 @@ import com.banking.userservice.mapper.CustomerMapper;
 import com.banking.userservice.repository.CustomerRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.banking.userservice.events.CustomerChanged;
+import com.banking.userservice.events.CustomerEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,10 +36,13 @@ public class CustomerService {
 
     private final CustomerRepository customerRepository;
     private final CustomerMapper customerMapper;
+    private final ApplicationEventPublisher events;
 
-    public CustomerService(CustomerRepository customerRepository, CustomerMapper customerMapper) {
+    public CustomerService(CustomerRepository customerRepository, CustomerMapper customerMapper,
+                           ApplicationEventPublisher events) {
         this.customerRepository = customerRepository;
         this.customerMapper = customerMapper;
+        this.events = events;
     }
 
     // ---------------------------------------------------------------- self-service
@@ -85,6 +91,7 @@ public class CustomerService {
         Customer customer = findOrThrow(id);
         customerRepository.delete(customer);
         audit.info("action=DELETE_CUSTOMER actor={} customer={} identity={}", actorId, id, customer.getKeycloakUserId());
+        events.publishEvent(new CustomerChanged(customer.getKeycloakUserId(), null));   // tombstone
     }
 
     // ---------------------------------------------------------------- shared logic
@@ -104,6 +111,7 @@ public class CustomerService {
                 keycloakUserId, firstName.trim(), lastName.trim(), normalizedEmail, phoneNumber,
                 customerMapper.toEntity(address)));
         audit.info("action=CREATE_CUSTOMER actor={} customer={} identity={}", actorId, customer.getId(), keycloakUserId);
+        announce(customer);
         return customerMapper.toResponse(customer);
     }
 
@@ -117,7 +125,13 @@ public class CustomerService {
                 profile.phoneNumber(), customerMapper.toEntity(profile.address()));
         customerRepository.flush();
         audit.info("action=UPDATE_CUSTOMER actor={} customer={}", actorId, customer.getId());
+        announce(customer);
         return customerMapper.toResponse(customer);
+    }
+
+    /** Sent to Kafka by CustomerEventPublisher only after this transaction commits. */
+    private void announce(Customer customer) {
+        events.publishEvent(new CustomerChanged(customer.getKeycloakUserId(), CustomerEvent.of(customer)));
     }
 
     private Customer findOrThrow(UUID id) {

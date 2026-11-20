@@ -8,11 +8,14 @@ import com.banking.paymentservice.dto.PaymentResponse;
 import com.banking.paymentservice.dto.TransferRequest;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
+import com.banking.paymentservice.events.PaymentEvent;
+import com.banking.paymentservice.events.PaymentEventPublisher;
 import com.banking.paymentservice.exception.PaymentNotCompletedException;
 import com.banking.paymentservice.repository.PaymentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,13 +51,16 @@ class PaymentServiceTest {
     @Mock
     private AccountServiceClient accounts;
 
+    @Mock
+    private PaymentEventPublisher events;
+
     private PaymentService service;
 
     private final List<PaymentStatus> statusesAtSaveTime = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
-        service = new PaymentService(repository, accounts);
+        service = new PaymentService(repository, accounts, events);
         statusesAtSaveTime.clear();
         when(repository.save(any(Payment.class))).thenAnswer(call -> {
             Payment payment = call.getArgument(0);
@@ -110,9 +116,35 @@ class PaymentServiceTest {
         InOrder order = inOrder(accounts);
         order.verify(accounts).getOwnAccount(SOURCE);          // customer token
         order.verify(accounts).findRecipient(TARGET_NUMBER);   // service token
-        order.verify(accounts).debit(SOURCE, AMOUNT);          // customer token: consent
+        order.verify(accounts).debit(eq(SOURCE), eq(AMOUNT), any());          // customer token: consent
         order.verify(accounts).credit(eq(TARGET), eq(AMOUNT), any());   // service token
         assertThat(statusesAtSaveTime).containsExactly(PaymentStatus.PENDING, PaymentStatus.DEBITED, PaymentStatus.COMPLETED);
+    }
+
+    @Test
+    void finalOutcomeIsPublishedOnce() {
+        bothAccountsActive();
+
+        service.transfer("alice", request());
+
+        ArgumentCaptor<PaymentEvent> event = ArgumentCaptor.forClass(PaymentEvent.class);
+        verify(events).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo("PAYMENT_COMPLETED");
+        assertThat(event.getValue().targetAccountNumber()).isEqualTo(TARGET_NUMBER);
+        assertThat(event.getValue().amount()).isEqualByComparingTo(AMOUNT);
+    }
+
+    @Test
+    void rejectionsArePublishedToo() {
+        source("THB");
+        recipient("USD", "ACTIVE");
+
+        transferFails();
+
+        ArgumentCaptor<PaymentEvent> event = ArgumentCaptor.forClass(PaymentEvent.class);
+        verify(events).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo("PAYMENT_REJECTED");
+        assertThat(event.getValue().failureCode()).isEqualTo("CURRENCY_MISMATCH");
     }
 
     // ------------------------------------------------------------------ nothing moved
@@ -123,7 +155,7 @@ class PaymentServiceTest {
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("SOURCE_ACCOUNT_NOT_FOUND");
         verify(accounts, never()).findRecipient(any());
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
@@ -136,7 +168,7 @@ class PaymentServiceTest {
         assertThat(ex.getPayment().status()).isEqualTo(PaymentStatus.REJECTED);
         assertThat(ex.getPayment().failureCode()).isEqualTo("TARGET_ACCOUNT_NOT_FOUND");
         assertThat(ex.isRetryable()).isFalse();
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
@@ -145,7 +177,7 @@ class PaymentServiceTest {
         when(accounts.findRecipient(TARGET_NUMBER)).thenReturn(new AccountView(SOURCE, TARGET_NUMBER, null, "THB", null, "ACTIVE"));
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("SAME_ACCOUNT");
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
@@ -154,7 +186,7 @@ class PaymentServiceTest {
         recipient("USD", "ACTIVE");
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("CURRENCY_MISMATCH");
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
@@ -163,13 +195,13 @@ class PaymentServiceTest {
         recipient("THB", "FROZEN");
 
         assertThat(transferFails().getPayment().failureCode()).isEqualTo("TARGET_ACCOUNT_NOT_ACTIVE");
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
     void insufficientFundsIsPassedThroughFromAccountService() {
         bothAccountsActive();
-        when(accounts.debit(SOURCE, AMOUNT)).thenThrow(new AccountRejectedException(422, "INSUFFICIENT_FUNDS", "balance 10.00"));
+        when(accounts.debit(eq(SOURCE), eq(AMOUNT), any())).thenThrow(new AccountRejectedException(422, "INSUFFICIENT_FUNDS", "balance 10.00"));
 
         PaymentNotCompletedException ex = transferFails();
 
@@ -186,7 +218,7 @@ class PaymentServiceTest {
 
         assertThat(ex.getPayment().status()).isEqualTo(PaymentStatus.FAILED);
         assertThat(ex.isRetryable()).isTrue();
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     @Test
@@ -198,7 +230,7 @@ class PaymentServiceTest {
         PaymentNotCompletedException ex = transferFails();
 
         assertThat(ex.getPayment().status()).isEqualTo(PaymentStatus.FAILED);
-        verify(accounts, never()).debit(any(), any());
+        verify(accounts, never()).debit(any(), any(), any());
     }
 
     // ------------------------------------------------------------------ the hard cases
@@ -206,13 +238,13 @@ class PaymentServiceTest {
     @Test
     void debitTimeoutNeedsReconciliationAndIsNotRetriedBlindly() {
         bothAccountsActive();
-        when(accounts.debit(SOURCE, AMOUNT)).thenThrow(timedOut());
+        when(accounts.debit(eq(SOURCE), eq(AMOUNT), any())).thenThrow(timedOut());
 
         PaymentResponse result = service.transfer("alice", request());
 
         assertThat(result.status()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
         assertThat(result.failureCode()).isEqualTo("DEBIT_OUTCOME_UNKNOWN");
-        verify(accounts).debit(SOURCE, AMOUNT);              // exactly once: a retry might debit twice
+        verify(accounts).debit(eq(SOURCE), eq(AMOUNT), any());              // exactly once: a retry might debit twice
         verify(accounts, never()).credit(any(), any(), any());
     }
 
@@ -227,9 +259,9 @@ class PaymentServiceTest {
         assertThat(ex.getPayment().failureCode()).isEqualTo("ACCOUNT_NOT_ACTIVE");
         assertThat(ex.isRetryable()).isFalse();
         InOrder order = inOrder(accounts);
-        order.verify(accounts).debit(SOURCE, AMOUNT);
+        order.verify(accounts).debit(eq(SOURCE), eq(AMOUNT), any());
         order.verify(accounts).credit(eq(TARGET), eq(AMOUNT), any());
-        order.verify(accounts).credit(eq(SOURCE), eq(AMOUNT), any());       // the compensating refund
+        order.verify(accounts).refund(eq(SOURCE), eq(AMOUNT), any());       // the compensating refund
     }
 
     @Test
@@ -241,14 +273,14 @@ class PaymentServiceTest {
 
         assertThat(result.status()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
         assertThat(result.failureCode()).isEqualTo("CREDIT_OUTCOME_UNKNOWN");
-        verify(accounts, never()).credit(eq(SOURCE), any(), any());          // refunding could pay out twice
+        verify(accounts, never()).refund(any(), any(), any());               // refunding could pay out twice
     }
 
     @Test
     void failedRefundIsEscalatedNotHidden() {
         bothAccountsActive();
         creditToTargetFails(unreachable());
-        when(accounts.credit(eq(SOURCE), eq(AMOUNT), any())).thenThrow(unreachable());
+        when(accounts.refund(eq(SOURCE), eq(AMOUNT), any())).thenThrow(unreachable());
 
         PaymentResponse result = service.transfer("alice", request());
 

@@ -1,0 +1,50 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: notification-service
+
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+
+  # Phase 11: Kafka CONSUMER (no database: notifications are simulated and kept in memory).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      # Group IDs are set per listener (notification-service, notification-service-directory).
+      # A brand-new group starts at the LATEST offset: don't e-mail customers about last month's
+      # payments when this service is deployed for the first time.
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:   # only for the dead-letter topics
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        max.block.ms: 5000
+
+banking:
+  kafka:
+    topics:
+      payment-events: banking.payment-events
+      account-transactions: banking.account-transactions
+      customer-events: banking.customer-events
+  security:
+    jwt:
+      issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
+      jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/banking/protocol/openid-connect/certs}
+      audience: banking-api
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN

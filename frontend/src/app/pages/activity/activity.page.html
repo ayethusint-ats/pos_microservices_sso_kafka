@@ -1,0 +1,58 @@
+<h1>Activity</h1>
+
+<app-error-message [error]="error()" />
+
+<p class="muted">
+  Built from events: a new transfer can take a moment to appear.
+  <button type="button" class="secondary" (click)="refresh()" data-testid="refresh">Refresh</button>
+</p>
+
+<h2>Statement</h2>
+<div class="card">
+  @if (loading()) {
+    <p class="muted">Loading…</p>
+  } @else if (transactions().length === 0) {
+    <p class="muted" data-testid="no-transactions">No transactions yet.</p>
+  } @else {
+    <table data-testid="transactions-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Account</th>
+          <th>What</th>
+          <th class="num">Amount</th>
+          <th class="num">Balance after</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (t of transactions(); track t.id) {
+          <tr [attr.data-account]="t.accountNumber" [attr.data-kind]="t.kind">
+            <td>{{ t.occurredAt | date: 'short' }}</td>
+            <td><code>{{ t.accountNumber }}</code></td>
+            <td>{{ label(t) }}</td>
+            <td class="num" data-testid="tx-amount">
+              {{ t.direction === 'DEBIT' ? '−' : '+' }}{{ t.amount | currency: t.currency }}
+            </td>
+            <td class="num">{{ t.balanceAfter | currency: t.currency }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>
+
+<h2>E-mails</h2>
+<div class="card">
+  @if (notifications().length === 0) {
+    <p class="muted" data-testid="no-notifications">No e-mails yet.</p>
+  } @else {
+    <ul class="notifications" data-testid="notifications">
+      @for (n of notifications(); track n.id) {
+        <li data-testid="notification">
+          <strong>{{ n.subject }}</strong> <small class="muted">{{ n.createdAt | date: 'short' }}</small>
+          <div>{{ n.body }}</div>
+        </li>
+      }
+    </ul>
+  }
+</div>

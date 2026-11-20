@@ -30,6 +30,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/payments/payments.page').then((m) => m.PaymentsPage),
   },
   {
+    path: 'activity',
+    title: 'Activity',
+    canActivate: [authGuard, roleGuard('CUSTOMER')],
+    loadComponent: () => import('./pages/activity/activity.page').then((m) => m.ActivityPage),
+  },
+  {
     path: 'backoffice',
     title: 'Back office',
     canActivate: [authGuard, roleGuard('SUPPORT', 'ADMIN')],

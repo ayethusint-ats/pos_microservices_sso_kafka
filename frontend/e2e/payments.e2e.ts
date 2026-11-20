@@ -95,6 +95,23 @@ test('alice pays bob by account number; bob sees the money arrive', async ({ bro
   await alice.goto('/accounts');
   await expect(alice.locator(`tr[data-account="${from}"] [data-testid="balance"]`)).toContainText('60.00');
 
+  // Phase 11: Bob's statement (transaction-service) and e-mail (notification-service) arrive via Kafka.
+  // Eventually consistent, so refresh until they're there (bounded).
+  await bob.goto('/activity');
+  await expect(async () => {
+    await bob.getByTestId('refresh').click();
+    await expect(bob.locator(`tr[data-account="${bobsNumber}"][data-kind="TRANSFER_IN"]`)).toHaveCount(1, { timeout: 1000 });
+    await expect(bob.getByTestId('notification').filter({ hasText: `You received 40.00 THB in account ${bobsNumber}` }))
+      .toHaveCount(1, { timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+
+  // Alice's statement shows the debit as a transfer, not a plain withdrawal.
+  await alice.goto('/activity');
+  await expect(async () => {
+    await alice.getByTestId('refresh').click();
+    await expect(alice.locator(`tr[data-account="${from}"][data-kind="TRANSFER_OUT"]`)).toHaveCount(1, { timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
+
   // An account number that doesn't exist is refused, and nothing moves.
   await alice.goto('/payments');
   await send(alice, from, '0000000000', '1');

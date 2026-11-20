@@ -1,0 +1,59 @@
+### Phase 11: Kafka. Read models built from events.
+### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|bob|sam> 2>/dev/null
+### Watch the events while you send these:
+###   docker exec banking-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+###     --topic banking.account-transactions --property print.key=true --property print.partition=true
+
+@gw = http://localhost:8080
+@alice = paste-alice-token
+@bob = paste-bob-token
+@sam = paste-sam-token
+@aliceAccount = paste-an-alice-account-id
+@bobsNumber = paste-a-bob-account-number
+@bobId = b0b5e1c2-3d4f-4a6b-8c9d-0e1f2a3b4c5d
+
+### 1. Deposit → event DEPOSIT (key = account ID)
+POST {{gw}}/api/accounts/{{aliceAccount}}/deposit
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "amount": 500.00 }
+
+### 2. Transfer → events TRANSFER_OUT (Alice), TRANSFER_IN (Bob), PAYMENT_COMPLETED
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 75.00, "description": "kafka demo" }
+
+### 3. Alice's statement (transaction-service, from events), newest first
+GET {{gw}}/api/transactions
+Authorization: Bearer {{alice}}
+
+### 4. One account only
+GET {{gw}}/api/transactions?accountId={{aliceAccount}}
+Authorization: Bearer {{alice}}
+
+### 5. Bob's statement: the incoming TRANSFER_IN
+GET {{gw}}/api/transactions
+Authorization: Bearer {{bob}}
+
+### 6. Bob asks for Alice's account → empty page (ownership is part of the query)
+GET {{gw}}/api/transactions?accountId={{aliceAccount}}
+Authorization: Bearer {{bob}}
+
+### 7. Bob's e-mails (notification-service): "Money received"
+GET {{gw}}/api/notifications
+Authorization: Bearer {{bob}}
+
+### 8. Alice's e-mails: "Transfer sent"
+GET {{gw}}/api/notifications
+Authorization: Bearer {{alice}}
+
+### 9. SUPPORT: a customer's movements (back office)
+GET {{gw}}/api/admin/transactions?ownerId={{bobId}}
+Authorization: Bearer {{sam}}
+
+### 10. Customer on the back-office endpoint → 403
+GET {{gw}}/api/admin/transactions
+Authorization: Bearer {{alice}}

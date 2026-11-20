@@ -1,5 +1,5 @@
 # Local infrastructure for the Banking Platform.
-# It grows one phase at a time: Postgres now, then Keycloak (Phase 4), Kafka (Phase 11), and so on.
+# It grows one phase at a time: Postgres (Phase 3), Keycloak (Phase 4), Kafka (Phase 11), and so on.
 #
 #   docker compose up -d        start
 #   docker compose ps           status and health
@@ -82,5 +82,58 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # Event streaming (Phase 11). Single broker in KRaft mode: the broker is its own controller,
+  # no ZooKeeper. Two listeners because clients connect from two "places":
+  #   localhost:9092   services started on your machine (mvn spring-boot:run)
+  #   kafka:29092      containers on the Compose network (kafka-init now, all services in Phase 15)
+  # A client connects to the bootstrap address, then reconnects to the ADVERTISED address the broker
+  # returns, so each listener must advertise an address that works from where its clients are.
+  kafka:
+    image: apache/kafka:4.1.1
+    container_name: banking-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # One broker → internal topics can't have 3 replicas.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly by infrastructure/kafka/create-topics.sh.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The image's default is /tmp/kraft-combined-logs, which is NOT the volume below:
+      # topics and messages would vanish whenever the container is re-created.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot job: creates the topics, then exits (status "Exited (0)" is success).
+  kafka-init:
+    image: apache/kafka:4.1.1
+    container_name: banking-kafka-init
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    volumes:
+      - ./infrastructure/kafka:/scripts:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres-data:
+  kafka-data:

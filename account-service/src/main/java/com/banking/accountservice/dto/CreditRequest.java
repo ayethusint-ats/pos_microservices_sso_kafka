@@ -13,6 +13,8 @@ import java.util.UUID;
  */
 public record CreditRequest(
         @NotNull @Positive @Digits(integer = 15, fraction = 2) BigDecimal amount,
-        @NotNull UUID paymentId
+        @NotNull UUID paymentId,
+        /** Phase 11: true when a reversed payment returns money to its source (event kind REFUND). */
+        boolean refund
 ) {
 }

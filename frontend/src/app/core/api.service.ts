@@ -87,6 +87,31 @@ export interface Payment extends Omit<TransferRequest, 'targetAccountNumber'> {
   createdAt: string;
 }
 
+export type TransactionKind = 'DEPOSIT' | 'WITHDRAWAL' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'REFUND';
+
+/** A statement line from transaction-service (built from account-service's Kafka events). */
+export interface Transaction {
+  id: string;
+  accountId: string;
+  accountNumber: string;
+  kind: TransactionKind;
+  direction: 'CREDIT' | 'DEBIT';
+  amount: number;
+  currency: string;
+  balanceAfter: number;
+  paymentId: string | null;
+  occurredAt: string;
+}
+
+/** A simulated e-mail from notification-service. */
+export interface Notification {
+  id: string;
+  to: string | null;
+  subject: string;
+  body: string;
+  createdAt: string;
+}
+
 /**
  * All calls go to the API Gateway. The token is added by authTokenInterceptor, errors are
  * normalized by apiErrorInterceptor.
@@ -143,6 +168,19 @@ export class ApiService {
 
   myPayments(page = 0, size = 20): Observable<Page<Payment>> {
     return this.http.get<Page<Payment>>(`${this.base}/api/payments`, { params: { page, size } });
+  }
+
+  /** Eventually consistent: a transfer appears here shortly AFTER it completed (Kafka → transaction-service). */
+  myTransactions(accountId?: string, page = 0, size = 50): Observable<Page<Transaction>> {
+    const params: Record<string, string | number> = { page, size };
+    if (accountId) {
+      params['accountId'] = accountId;
+    }
+    return this.http.get<Page<Transaction>>(`${this.base}/api/transactions`, { params });
+  }
+
+  myNotifications(): Observable<Notification[]> {
+    return this.http.get<Notification[]>(`${this.base}/api/notifications`);
   }
 
   // ------------------------------------------------------------ back office (SUPPORT, ADMIN)

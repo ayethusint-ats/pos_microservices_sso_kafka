@@ -45,6 +45,12 @@
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
 
+        <!-- Phase 11: publishes payment outcome events to Kafka. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- PostgreSQL JDBC driver (only needed at runtime, the code uses JPA/JDBC interfaces). -->
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -86,6 +92,11 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
