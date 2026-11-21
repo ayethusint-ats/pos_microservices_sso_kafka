@@ -1,4 +1,6 @@
-# Phase 14: Grafana's data sources, as code (no clicking in the UI after a fresh start).
+# Grafana's data sources, as code (no clicking in the UI after a fresh start).
+# Phase 15: + Loki, with links in both directions: log line → its trace, span → its log lines.
+# ("$$" escapes "$" in provisioning files: Grafana would otherwise read it as an env variable.)
 apiVersion: 1
 datasources:
   - name: Prometheus
@@ -12,3 +14,22 @@ datasources:
     type: jaeger
     access: proxy
     url: http://jaeger:16686
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        query: '{service=~".+"} | trace_id="$${__trace.traceId}"'
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: jaeger
+          url: "$${__value.raw}"

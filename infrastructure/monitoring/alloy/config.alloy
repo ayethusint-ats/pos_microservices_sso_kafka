@@ -1,0 +1,52 @@
+// Phase 15: container logs → Loki.
+// 1. discover containers through the Docker API
+// 2. keep only ours (label banking.logs=true), name them by their Compose service
+// 3. parse the JSON (ECS) line, turn the level into a label
+// 4. push to Loki
+// The traceId is NOT a label (one value per request would explode Loki's index). It's kept as
+// structured metadata, searchable with  {service="payment-service"} | trace_id="..."  and Grafana
+// links it to the trace in Jaeger.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "banking" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_banking_logs"]
+    regex         = "true"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "banking" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.banking.rules
+  forward_to    = [loki.process.ecs.receiver]
+}
+
+loki.process "ecs" {
+  stage.json {
+    expressions = { level = "log.level", trace_id = "traceId" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  stage.structured_metadata {
+    values = { trace_id = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

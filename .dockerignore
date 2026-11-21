@@ -1,0 +1,14 @@
+# Phase 15: what the Docker build may NOT see. Smaller context = faster builds, and secrets can't
+# end up in an image layer by accident.
+.env
+.env.*
+!.env.example
+**/target/
+**/node_modules/
+frontend/
+.git/
+.idea/
+.vscode/
+documentation/
+infrastructure/
+**/*.log

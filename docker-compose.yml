@@ -11,6 +11,37 @@
 
 name: banking-platform
 
+# Phase 15: common settings of the six Spring Boot containers (YAML anchors, used below).
+x-java-service: &java-service
+  build: &java-build
+    context: .
+    dockerfile: Dockerfile
+  profiles: [app]                       # `docker compose --profile app up` starts the application too
+  restart: unless-stopped
+  mem_limit: 512m                       # the JVM sizes its heap from this (MaxRAMPercentage=75)
+  stop_grace_period: 30s                # > Spring's 20 s graceful shutdown phase
+  labels:
+    banking.logs: "true"                # Alloy ships logs of containers with this label to Loki
+  networks: [default]
+
+x-java-env: &java-env
+  SPRING_PROFILES_ACTIVE: json-logs     # JSON log lines (ECS) for Loki
+  DB_HOST: postgres                     # Compose service names = DNS names on the network
+  DB_PORT: "5432"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092  # the INTERNAL listener (Phase 11)
+  # Issuer = what is IN the token. The browser gets tokens from localhost:8180, and Keycloak's fixed
+  # KC_HOSTNAME makes tokens fetched from inside the network carry the same issuer. Keys and tokens
+  # are FETCHED over the internal network (localhost inside a container is the container itself).
+  KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/banking
+  KEYCLOAK_JWK_SET_URI: http://keycloak:8180/realms/banking/protocol/openid-connect/certs
+  OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+
+x-depends-on-data: &depends-on-data
+  postgres:
+    condition: service_healthy
+  kafka-init:
+    condition: service_completed_successfully   # topics exist before any producer/consumer starts
+
 services:
   postgres:
     image: postgres:17.12-alpine          # pin an exact version so every machine runs the same one
@@ -179,10 +210,135 @@ services:
     depends_on:
       - prometheus
       - jaeger
+      - loki
     restart: unless-stopped
+
+  # ---------------------------------------------------------------- Phase 15: the application
+  # Only the gateway (8080) and the frontend (4200) are published. The services are reachable
+  # only inside the Compose network: the gateway really is the single entry point now.
+  user-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: user-service, PORT: "8081" } }
+    image: banking/user-service:${IMAGE_TAG:-local}
+    container_name: banking-user-service
+    environment: *java-env
+    secrets: [{ source: user_db_password, target: USER_DB_PASSWORD }]
+    depends_on: *depends-on-data
+
+  account-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: account-service, PORT: "8082" } }
+    image: banking/account-service:${IMAGE_TAG:-local}
+    container_name: banking-account-service
+    environment: *java-env
+    secrets: [{ source: account_db_password, target: ACCOUNT_DB_PASSWORD }]
+    depends_on: *depends-on-data
+
+  payment-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: payment-service, PORT: "8083" } }
+    image: banking/payment-service:${IMAGE_TAG:-local}
+    container_name: banking-payment-service
+    environment:
+      <<: *java-env
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      KEYCLOAK_TOKEN_URI: http://keycloak:8180/realms/banking/protocol/openid-connect/token
+    secrets:
+      - { source: payment_db_password, target: PAYMENT_DB_PASSWORD }
+      - { source: payment_service_client_secret, target: PAYMENT_SERVICE_CLIENT_SECRET }
+    depends_on: *depends-on-data
+
+  transaction-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: transaction-service, PORT: "8084" } }
+    image: banking/transaction-service:${IMAGE_TAG:-local}
+    container_name: banking-transaction-service
+    environment: *java-env
+    secrets: [{ source: transaction_db_password, target: TRANSACTION_DB_PASSWORD }]
+    depends_on: *depends-on-data
+
+  notification-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: notification-service, PORT: "8085" } }
+    image: banking/notification-service:${IMAGE_TAG:-local}
+    container_name: banking-notification-service
+    environment: *java-env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+  api-gateway:
+    <<: *java-service
+    build: { <<: *java-build, args: { SERVICE: api-gateway, PORT: "8080" } }
+    image: banking/api-gateway:${IMAGE_TAG:-local}
+    container_name: banking-api-gateway
+    environment:
+      <<: *java-env
+      USER_SERVICE_URL: http://user-service:8081
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      TRANSACTION_SERVICE_URL: http://transaction-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8085
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: { context: ./frontend }
+    image: banking/frontend:${IMAGE_TAG:-local}
+    container_name: banking-frontend
+    profiles: [app]
+    mem_limit: 64m
+    ports:
+      - "4200:8080"          # http://localhost:4200, the redirect URI registered in Keycloak
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- Phase 15: logs
+  # Loki stores log lines, indexed only by a few labels (service, level); Grafana queries it.
+  loki:
+    image: grafana/loki:3.5.3
+    container_name: banking-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]   # single-process, filesystem storage (dev)
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  # Alloy tails the logs of containers labelled banking.logs=true and pushes them to Loki.
+  alloy:
+    image: grafana/alloy:v1.10.0
+    container_name: banking-alloy
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./infrastructure/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only access to the Docker API, to discover containers and read their logs. Still
+      # powerful (it can see every container): only for this collector, never for an app container.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+# Phase 15: secrets become FILES in /run/secrets inside the container (target = file name), read
+# by Spring's configtree. Unlike environment variables they don't show in `docker inspect`, in
+# /proc/<pid>/environ, or in crash dumps. Values come from .env (never committed).
+secrets:
+  user_db_password:
+    environment: USER_DB_PASSWORD
+  account_db_password:
+    environment: ACCOUNT_DB_PASSWORD
+  payment_db_password:
+    environment: PAYMENT_DB_PASSWORD
+  transaction_db_password:
+    environment: TRANSACTION_DB_PASSWORD
+  payment_service_client_secret:
+    environment: PAYMENT_SERVICE_CLIENT_SECRET
 
 volumes:
   postgres-data:
   kafka-data:
   prometheus-data:
   grafana-data:
+  loki-data:

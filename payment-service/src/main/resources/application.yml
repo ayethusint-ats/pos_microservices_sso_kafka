@@ -10,6 +10,9 @@ spring:
     import:
       - optional:file:.env[.properties]
       - optional:file:../.env[.properties]
+      # Phase 15, in containers: each secret is a FILE /run/secrets/<NAME> (Compose secrets, Kubernetes
+      # Secrets). configtree turns the file name into a property, so ${<NAME>} below resolves from it.
+      - optional:configtree:/run/secrets/
 
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:${POSTGRES_PORT:5433}}/payment_db
@@ -223,3 +226,16 @@ logging:
   structured:
     format:
       console: ecs
+
+---
+# Phase 15: running in containers.
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true            # /actuator/health/liveness and /readiness: Docker healthcheck now, Kubernetes probes in Phase 16
+server:
+  shutdown: graceful             # on SIGTERM (docker stop): stop accepting, finish in-flight requests
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s   # then stop anyway; below Compose's stop_grace_period (30 s)

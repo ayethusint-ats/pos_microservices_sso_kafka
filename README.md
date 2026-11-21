@@ -20,13 +20,24 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 12 | Resilience: circuit breaker, retry, bulkhead, rate limiter | [documentation/12-resilience4j.md](documentation/12-resilience4j.md) |
 | 13 | Saga, idempotency (Idempotency-Key, idempotent operations) and the transactional outbox | [documentation/13-saga-idempotency.md](documentation/13-saga-idempotency.md) |
 | 14 | Monitoring, logging and tracing: Prometheus, Grafana, OpenTelemetry, Jaeger | [documentation/14-observability.md](documentation/14-observability.md) |
+| 15 | Docker: images, the whole platform in Compose, secrets as files, logs in Loki | [documentation/15-docker.md](documentation/15-docker.md) |
+
+## Quick start
+
+```bash
+cp .env.example .env                           # fill in local secrets (never committed)
+docker compose --profile app up -d --build     # the whole platform
+./infrastructure/docker/smoke-test.sh          # verify
+```
+App: http://localhost:4200 · API: http://localhost:8080 · Grafana: http://localhost:3000 · Jaeger: http://localhost:16686
 
 ## Layout
 
 ```
 banking-platform/
 ├── pom.xml                  # Root aggregator: pins Spring Boot + Spring Cloud versions
-├── docker-compose.yml       # Local infrastructure: PostgreSQL, Keycloak, Kafka (KRaft), Prometheus, Jaeger, Grafana
+├── Dockerfile               # One multi-stage image definition for all six Spring Boot services (Phase 15)
+├── docker-compose.yml       # Infrastructure + monitoring; with --profile app the whole platform (Phase 15)
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
 ├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
@@ -39,7 +50,8 @@ banking-platform/
 │   ├── keycloak/            # Realm as code + PKCE login script (Phase 4)
 │   ├── postgres/init/       # Creates one database + role per service (Phase 3)
 │   ├── kafka/               # Topics as code: create-topics.sh (Phase 11)
-│   └── monitoring/          # Prometheus scrape config + alerts, Grafana data sources + dashboard (Phase 14)
+│   ├── monitoring/          # Prometheus, Grafana, Alloy → Loki (Phases 14–15)
+│   └── docker/              # smoke-test.sh for the running container stack (Phase 15)
 └── documentation/
 ```
 
