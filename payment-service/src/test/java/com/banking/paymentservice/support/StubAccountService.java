@@ -27,7 +27,8 @@ import java.util.concurrent.Executors;
  */
 public final class StubAccountService implements AutoCloseable {
 
-    public record Recorded(String method, String path, String authorization, String body) {
+    /** {@code traceparent}: the W3C trace header payment-service sent (Phase 14), or null. */
+    public record Recorded(String method, String path, String authorization, String body, String traceparent) {
         public String call() {
             return method + " " + path;
         }
@@ -177,7 +178,8 @@ public final class StubAccountService implements AutoCloseable {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        requests.add(new Recorded(method, path, exchange.getRequestHeaders().getFirst("Authorization"), body));
+        requests.add(new Recorded(method, path, exchange.getRequestHeaders().getFirst("Authorization"), body,
+                exchange.getRequestHeaders().getFirst("traceparent")));
 
         Reply notFound = new Reply(404,
                 "{\"title\":\"Resource not found\",\"status\":404,\"detail\":\"Account not found\"}", Duration.ZERO);

@@ -19,6 +19,7 @@ import com.banking.accountservice.exception.UnsupportedCurrencyException;
 import com.banking.accountservice.mapper.AccountMapper;
 import com.banking.accountservice.repository.AccountRepository;
 import com.banking.accountservice.repository.PaymentOperationRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -55,12 +56,15 @@ public class AccountService {
     private final AccountMapper accountMapper;
     private final PaymentOperationRepository operations;
     private final AccountEventPublisher events;
+    private final MeterRegistry meters;
 
     public AccountService(AccountRepository accountRepository,
                           AccountNumberGenerator accountNumberGenerator,
                           AccountMapper accountMapper,
                           PaymentOperationRepository operations,
-                          AccountEventPublisher events) {
+                          AccountEventPublisher events,
+                          MeterRegistry meters) {
+        this.meters = meters;
         this.accountRepository = accountRepository;
         this.accountNumberGenerator = accountNumberGenerator;
         this.accountMapper = accountMapper;
@@ -126,6 +130,7 @@ public class AccountService {
             if (previous.isPresent()) {
                 requireRepeat(previous.get(), PaymentOperationKind.TRANSFER_OUT, id, amount);
                 audit.info("action=WITHDRAW_REPLAYED actor={} account={} amount={} payment={}", ownerId, id, amount, paymentId);
+                countOperation(PaymentOperationKind.TRANSFER_OUT, "replayed");
                 return accountMapper.toResponse(account);
             }
         }
@@ -134,6 +139,7 @@ public class AccountService {
         if (paymentId != null) {
             // Same transaction as the balance change. A concurrent duplicate fails on the primary key.
             operations.saveAndFlush(PaymentOperation.moneyMoved(paymentId, PaymentOperationKind.TRANSFER_OUT, id, amount));
+            countOperation(PaymentOperationKind.TRANSFER_OUT, "applied");
         }
         audit.info("action=WITHDRAW actor={} account={} amount={} payment={}", ownerId, id, amount, paymentId);
         recordTransaction(account, paymentId == null ? TransactionKind.WITHDRAWAL : TransactionKind.TRANSFER_OUT,
@@ -183,12 +189,14 @@ public class AccountService {
         if (settled.isPresent()) {
             requireRepeat(settled.get(), kind, id, amount);
             audit.info("action={}_REPLAYED actor=client:{} account={} amount={} payment={}", kind, clientId, id, amount, paymentId);
+            countOperation(kind, "replayed");
             return accountMapper.toSummary(account);
         }
 
         account.deposit(amount);
         accountRepository.flush();
         operations.saveAndFlush(PaymentOperation.moneyMoved(paymentId, kind, id, amount));
+        countOperation(kind, "applied");
         audit.info("action={} actor=client:{} account={} amount={} payment={}",
                 refund ? "REFUND" : "CREDIT", clientId, id, amount, paymentId);
         recordTransaction(account, refund ? TransactionKind.REFUND : TransactionKind.TRANSFER_IN, "CREDIT", amount, paymentId);
@@ -207,6 +215,7 @@ public class AccountService {
     public DebitResolution resolveDebit(UUID paymentId, String clientId) {
         PaymentOperation debit = operations.find(paymentId, PaymentLeg.DEBIT).orElseGet(() -> {
             audit.info("action=VOID_DEBIT actor=client:{} payment={}", clientId, paymentId);
+            countOperation(PaymentOperationKind.VOID, "applied");
             return operations.saveAndFlush(PaymentOperation.voidedDebit(paymentId));
         });
         return debit.getKind() == PaymentOperationKind.VOID
@@ -232,6 +241,15 @@ public class AccountService {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Phase 14: banking_account_payment_operations_total{kind, result = applied | replayed}.
+     * A rising "replayed" rate means callers retry a lot: idempotency is working, and something
+     * between payment-service and account-service is slow or flaky. (Counted before commit.)
+     */
+    private void countOperation(PaymentOperationKind kind, String result) {
+        meters.counter("banking.account.payment.operations", "kind", kind.name(), "result", result).increment();
+    }
 
     /** A repeated payment operation must be EXACTLY the same operation; anything else is refused. */
     private static void requireRepeat(PaymentOperation previous, PaymentOperationKind kind, UUID accountId, BigDecimal amount) {

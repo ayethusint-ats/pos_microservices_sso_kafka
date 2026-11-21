@@ -3,6 +3,7 @@ package com.banking.paymentservice.service;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
 import com.banking.paymentservice.repository.PaymentRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -33,13 +34,15 @@ public class PaymentRecoveryJob {
     private final PaymentStore store;
     private final TransferSaga saga;
     private final RecoveryProperties properties;
+    private final MeterRegistry meters;
 
     public PaymentRecoveryJob(PaymentRepository repository, PaymentStore store, TransferSaga saga,
-                              RecoveryProperties properties) {
+                              RecoveryProperties properties, MeterRegistry meters) {
         this.repository = repository;
         this.store = store;
         this.saga = saga;
         this.properties = properties;
+        this.meters = meters;
     }
 
     @Scheduled(fixedDelayString = "${banking.payments.recovery.poll-interval-ms:5000}",
@@ -79,20 +82,29 @@ public class PaymentRecoveryJob {
         } catch (RuntimeException ex) {
             // Unexpected (a bug, the database...): the payment comes due again after its backoff.
             log.error("Recovery of payment {} failed unexpectedly", payment.getId(), ex);
+            count("error");
             return;
         }
         if (payment.getStatus().isFinal()) {
+            count("finished");
             log.info("Recovered payment {}: {} -> {} (attempt {})", payment.getId(), before, payment.getStatus(),
                     payment.getRecoveryAttempts());
         } else if (payment.getRecoveryAttempts() >= properties.maxAttempts()) {
             log.error("Giving up on payment {} after {} attempts in {}: needs a person", payment.getId(),
                     payment.getRecoveryAttempts(), payment.getStatus());
+            count("exhausted");
             payment.requireReconciliation("RECOVERY_EXHAUSTED", "Automatic recovery gave up after %d attempts in status %s (%s)"
                     .formatted(payment.getRecoveryAttempts(), payment.getStatus(), payment.getFailureReason()));
             store.save(payment);
         } else {
+            count("retry_later");
             log.info("Payment {} still {} after recovery attempt {}; next at {}", payment.getId(), payment.getStatus(),
                     payment.getRecoveryAttempts(), payment.getNextRecoveryAt());
         }
+    }
+
+    /** Phase 14: banking_payments_recovery_total{result = finished | retry_later | exhausted | error}. */
+    private void count(String result) {
+        meters.counter("banking.payments.recovery", "result", result).increment();
     }
 }

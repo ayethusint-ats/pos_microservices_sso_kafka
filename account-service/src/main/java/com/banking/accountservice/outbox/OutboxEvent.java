@@ -48,11 +48,20 @@ public class OutboxEvent {
     @Column(length = MAX_ERROR_LENGTH)
     private String lastError;
 
+    /** Phase 14: W3C traceparent of the writing transaction; null when it ran outside a trace. */
+    @Column(updatable = false, length = 55)
+    private String traceParent;
+
     protected OutboxEvent() {
         // for JPA
     }
 
     public OutboxEvent(UUID id, String topic, String messageKey, String payload, Instant createdAt) {
+        this(id, topic, messageKey, payload, createdAt, null);
+    }
+
+    public OutboxEvent(UUID id, String topic, String messageKey, String payload, Instant createdAt, String traceParent) {
+        this.traceParent = traceParent;
         this.id = Objects.requireNonNull(id);
         this.topic = Objects.requireNonNull(topic);
         this.messageKey = Objects.requireNonNull(messageKey);
@@ -105,5 +114,9 @@ public class OutboxEvent {
 
     public String getLastError() {
         return lastError;
+    }
+
+    public String getTraceParent() {
+        return traceParent;
     }
 }

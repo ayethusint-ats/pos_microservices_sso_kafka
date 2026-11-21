@@ -1,5 +1,7 @@
 package com.banking.accountservice.outbox;
 
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +44,7 @@ class OutboxRelayTest {
     @BeforeEach
     void setUp() {
         relay = new OutboxRelay(repository, kafka, mock(TransactionTemplate.class), 100,
-                Duration.ofMillis(200), Duration.ofDays(7));
+                Duration.ofMillis(200), Duration.ofDays(7), Tracer.NOOP, Propagator.NOOP);
         when(repository.lockNextBatch(100)).thenReturn(List.of(first, second, third));
     }
 

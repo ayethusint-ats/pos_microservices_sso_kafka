@@ -134,6 +134,55 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # ---------------------------------------------------------------- Phase 14: observability
+  # Prometheus scrapes the services' /actuator/prometheus (services on the host until Phase 15).
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: banking-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Docker Desktop has it built in; Linux needs this line
+    restart: unless-stopped
+
+  # Jaeger receives traces over OTLP (4318 HTTP, 4317 gRPC) and shows them on :16686.
+  # In-memory storage: traces are gone after a restart (production: Elasticsearch/Cassandra or Tempo).
+  jaeger:
+    image: jaegertracing/jaeger:2.9.0
+    container_name: banking-jaeger
+    ports:
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP (Spring Boot's default exporter)
+    restart: unless-stopped
+
+  # Grafana: dashboards over Prometheus and Jaeger, provisioned from infrastructure/monitoring/grafana.
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: banking-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - jaeger
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   kafka-data:
+  prometheus-data:
+  grafana-data:

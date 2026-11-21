@@ -65,6 +65,9 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // Liveness/readiness probes (Docker, Kubernetes) must work without a token.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Phase 14: Prometheus scrapes without a token. Metrics hold no customer data; the gateway never
+                        // routes /actuator, and in Kubernetes only the monitoring namespace may reach it (Phase 16).
+                        .requestMatchers("/actuator/prometheus").permitAll()
                         // Back office: staff only, whatever the method-level rules say.
                         .requestMatchers("/api/admin/**").hasAnyRole("SUPPORT", "ADMIN")
                         // Phase 10: machine-to-machine API. Only callers holding account-service's

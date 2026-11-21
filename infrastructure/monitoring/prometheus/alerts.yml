@@ -1,0 +1,62 @@
+# Phase 14: alert rules. Prometheus evaluates them (see http://localhost:9090/alerts); in production
+# Alertmanager would route firing alerts to on-call (PagerDuty, Slack, e-mail).
+# Rule of thumb: alert on SYMPTOMS users or money feel, with a "for:" so blips don't page anyone.
+groups:
+  - name: banking-platform
+    rules:
+      - alert: ServiceDown
+        expr: up{job="banking-services"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} is not answering /actuator/prometheus"
+
+      - alert: HighServerErrorRate
+        expr: |
+          sum by (application) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+            / sum by (application) (rate(http_server_requests_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.application }}: more than 5 % of requests fail with 5xx"
+
+      - alert: SlowTransfers
+        expr: histogram_quantile(0.95, sum by (le) (rate(banking_transfer_seconds_bucket[5m]))) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "95 % of transfers should finish within 5 s (now {{ $value | humanizeDuration }})"
+
+      - alert: OutboxStalled
+        expr: banking_outbox_oldest_age_seconds > 60
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.application }}: events wait > 60 s in the outbox (Kafka or a topic broken). Nothing is lost, but statements and e-mails are stale."
+
+      - alert: PaymentsNeedAPerson
+        expr: banking_payments_open{status="NEEDS_RECONCILIATION"} > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} payment(s) in NEEDS_RECONCILIATION: back office must check them"
+
+      - alert: PaymentsStuckInProgress
+        expr: sum(banking_payments_open{status=~"PENDING|DEBITED|COMPENSATING"}) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Unfinished payments for 30 min: is the recovery job running? (it normally finishes them within minutes)"
+
+      - alert: CircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.application }}: circuit breaker {{ $labels.name }} is OPEN: its downstream service is failing"
+
+      - alert: KafkaConsumerLag
+        expr: max by (application, client_id) (kafka_consumer_fetch_manager_records_lag_max) > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }} is more than 100 events behind"

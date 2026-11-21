@@ -1,0 +1,25 @@
+# Phase 14: Prometheus PULLS metrics from every service's /actuator/prometheus every 15 s.
+# The services run on the host (mvn spring-boot:run) until Phase 15, so Prometheus (in Docker)
+# reaches them through host.docker.internal. Phase 15/16 switch this to container/pod discovery.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: banking-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8080   # api-gateway
+          - host.docker.internal:8081   # user-service
+          - host.docker.internal:8082   # account-service
+          - host.docker.internal:8083   # payment-service
+          - host.docker.internal:8084   # transaction-service
+          - host.docker.internal:8085   # notification-service
+
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

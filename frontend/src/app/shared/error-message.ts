@@ -1,7 +1,10 @@
 import { Component, input } from '@angular/core';
 import { ApiError } from '../core/api-error.interceptor';
 
-/** Shows an ApiError, including the request ID that support can look up in the logs. */
+/**
+ * Shows an ApiError, including the IDs support needs: the request ID finds the log lines, the
+ * trace ID (Phase 14) opens the whole request in Jaeger.
+ */
 @Component({
   selector: 'app-error-message',
   template: `
@@ -16,6 +19,9 @@ import { ApiError } from '../core/api-error.interceptor';
         }
         @if (e.requestId) {
           <div><small>Request ID: <code>{{ e.requestId }}</code></small></div>
+        }
+        @if (e.traceId) {
+          <div><small>Trace ID: <code data-testid="trace-id">{{ e.traceId }}</code></small></div>
         }
       </div>
     }

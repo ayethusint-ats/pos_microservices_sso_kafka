@@ -1,7 +1,12 @@
 package com.banking.accountservice.outbox;
 
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -13,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -39,18 +45,31 @@ public class OutboxRelay {
     private final int batchSize;
     private final Duration sendTimeout;
     private final Duration retention;
+    private final Tracer tracer;
+    private final Propagator propagator;
 
+    @Autowired
     public OutboxRelay(OutboxRepository repository, KafkaTemplate<String, String> kafkaTemplate,
                        TransactionTemplate transactionTemplate,
                        @Value("${banking.outbox.batch-size:100}") int batchSize,
                        @Value("${banking.outbox.send-timeout:5s}") Duration sendTimeout,
-                       @Value("${banking.outbox.retention:7d}") Duration retention) {
+                       @Value("${banking.outbox.retention:7d}") Duration retention,
+                       ObjectProvider<Tracer> tracer, ObjectProvider<Propagator> propagator) {
+        this(repository, kafkaTemplate, transactionTemplate, batchSize, sendTimeout, retention,
+                tracer.getIfAvailable(() -> Tracer.NOOP), propagator.getIfAvailable(() -> Propagator.NOOP));
+    }
+
+    OutboxRelay(OutboxRepository repository, KafkaTemplate<String, String> kafkaTemplate,
+                TransactionTemplate transactionTemplate, int batchSize, Duration sendTimeout, Duration retention,
+                Tracer tracer, Propagator propagator) {
         this.repository = repository;
         this.kafkaTemplate = kafkaTemplate;
         this.transactionTemplate = transactionTemplate;
         this.batchSize = batchSize;
         this.sendTimeout = sendTimeout;
         this.retention = retention;
+        this.tracer = tracer;
+        this.propagator = propagator;
     }
 
     /** Runs every poll interval; drains the backlog batch by batch while Kafka keeps accepting. */
@@ -82,7 +101,7 @@ public class OutboxRelay {
         List<CompletableFuture<SendResult<String, String>>> acks = new ArrayList<>(batch.size());
         for (OutboxEvent event : batch) {
             try {
-                acks.add(kafkaTemplate.send(event.getTopic(), event.getMessageKey(), event.getPayload()));
+                acks.add(sendInOriginalTrace(event));
             } catch (RuntimeException ex) {
                 // send() itself throws when the broker's metadata isn't available within max.block.ms.
                 acks.add(CompletableFuture.failedFuture(ex));
@@ -115,6 +134,26 @@ public class OutboxRelay {
             log.debug("Published {} outbox event(s)", sent);
         }
         return new BatchResult(sent, true);
+    }
+
+    /**
+     * Phase 14: this runs in a scheduler thread, so there's no current trace. Restore the one stored
+     * with the row: KafkaTemplate's observation then creates the producer span as its child and
+     * writes {@code traceparent} into the Kafka headers, and the consumers continue the same trace.
+     */
+    private CompletableFuture<SendResult<String, String>> sendInOriginalTrace(OutboxEvent event) {
+        if (event.getTraceParent() == null) {
+            return kafkaTemplate.send(event.getTopic(), event.getMessageKey(), event.getPayload());
+        }
+        Span span = propagator.extract(Map.of("traceparent", event.getTraceParent()), Map::get)
+                .name("outbox publish")
+                .tag("outbox.event_id", event.getId().toString())
+                .start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            return kafkaTemplate.send(event.getTopic(), event.getMessageKey(), event.getPayload());
+        } finally {
+            span.end();
+        }
     }
 
     record BatchResult(int sent, boolean complete) {

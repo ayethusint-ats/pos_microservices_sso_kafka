@@ -33,7 +33,11 @@ describe('apiErrorInterceptor', () => {
 
     backend.expectOne('http://localhost:8080/api/accounts/1').flush(
       { title: 'Payment rejected', detail: 'Insufficient funds', requestId: 'req-42', code: 'INSUFFICIENT_FUNDS' },
-      { status: 422, statusText: 'Unprocessable Entity' },
+      {
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        headers: { 'X-Trace-Id': '4bf92f3577b34da6a3ce929d0e0e4736' },
+      },
     );
 
     expect(received).toBeInstanceOf(ApiError);
@@ -41,6 +45,7 @@ describe('apiErrorInterceptor', () => {
     expect(received?.detail).toBe('Insufficient funds');
     expect(received?.requestId).toBe('req-42');
     expect(received?.code).toBe('INSUFFICIENT_FUNDS');
+    expect(received?.traceId).toBe('4bf92f3577b34da6a3ce929d0e0e4736');
   });
 
   it('starts a new login on 401, but only once within the loop-protection window', () => {

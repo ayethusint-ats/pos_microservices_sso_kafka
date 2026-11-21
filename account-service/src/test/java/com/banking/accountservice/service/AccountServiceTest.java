@@ -11,6 +11,7 @@ import com.banking.accountservice.exception.ResourceNotFoundException;
 import com.banking.accountservice.exception.UnsupportedCurrencyException;
 import com.banking.accountservice.mapper.AccountMapper;
 import com.banking.accountservice.repository.AccountRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,7 +49,8 @@ class AccountServiceTest {
 
     @BeforeEach
     void setUp() {
-        accountService = new AccountService(accountRepository, accountNumberGenerator, new AccountMapper(), operations, events);
+        accountService = new AccountService(accountRepository, accountNumberGenerator, new AccountMapper(), operations, events,
+                new SimpleMeterRegistry());
     }
 
     // ---------------------------------------------------------------- events (Phase 11)

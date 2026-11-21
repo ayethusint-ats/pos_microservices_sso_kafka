@@ -26,6 +26,10 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, UUID> {
 
     long countByPublishedAtIsNull();
 
+    /** Phase 14 metric: how long the oldest unsent event has been waiting (null = none waiting). */
+    @Query("SELECT MIN(e.createdAt) FROM OutboxEvent e WHERE e.publishedAt IS NULL")
+    Instant oldestUnpublishedCreatedAt();
+
     @Modifying
     @Query("DELETE FROM OutboxEvent e WHERE e.publishedAt < :before")
     int deletePublishedBefore(Instant before);

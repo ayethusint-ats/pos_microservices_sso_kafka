@@ -1,0 +1,35 @@
+### Phase 14: metrics, traces, logs.
+### UIs: Grafana http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD), Jaeger http://localhost:16686,
+###      Prometheus http://localhost:9090 (targets, alerts)
+### Token: ./infrastructure/keycloak/pkce-login.sh alice 2>/dev/null
+
+@gw = http://localhost:8080
+@alice = paste-alice-token
+@aliceAccount = paste-an-alice-account-id
+@bobsNumber = paste-a-bob-account-number
+
+### 1. A transfer. Look at the response header X-Trace-Id, then open it in Jaeger (request 6)
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+Idempotency-Key: {{$uuid}}
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 1.00 }
+
+### 2. An error also has an X-Trace-Id (401 from the gateway itself)
+GET {{gw}}/api/accounts
+
+### 3. Metrics as Prometheus scrapes them (no token needed; never routed through the gateway)
+GET http://localhost:8083/actuator/prometheus
+
+### 4. PromQL: transfers by outcome in the last 5 minutes
+GET http://localhost:9090/api/v1/query?query=sum by (status) (increase(banking_transfer_seconds_count[5m]))
+
+### 5. Alerts and their state (inactive / pending / firing)
+GET http://localhost:9090/api/v1/alerts
+
+### 6. One trace from Jaeger (paste the X-Trace-Id from request 1)
+GET http://localhost:16686/api/traces/paste-a-trace-id
+
+### 7. Is the outbox keeping up?
+GET http://localhost:9090/api/v1/query?query=banking_outbox_oldest_age_seconds

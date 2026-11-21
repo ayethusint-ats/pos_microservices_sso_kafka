@@ -4,6 +4,7 @@ import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.events.PaymentEvent;
 import com.banking.paymentservice.events.PaymentEventPublisher;
 import com.banking.paymentservice.repository.PaymentRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,11 +32,13 @@ class PaymentStoreTest {
     private PaymentEventPublisher events;
 
     private PaymentStore store;
+    private SimpleMeterRegistry meters;
     private Payment payment;
 
     @BeforeEach
     void setUp() {
-        store = new PaymentStore(repository, events);
+        meters = new SimpleMeterRegistry();
+        store = new PaymentStore(repository, events, meters);
         when(repository.saveAndFlush(any(Payment.class))).thenAnswer(call -> call.getArgument(0));
         payment = new Payment("alice", UUID.randomUUID(), "2222222222", new BigDecimal("5.00"), "rent");
     }
@@ -48,6 +51,7 @@ class PaymentStoreTest {
         store.save(payment);                               // DEBITED
 
         verify(events, never()).publish(any());
+        assertThat(meters.find("banking.payments.finished").counter()).isNull();
     }
 
     @Test
@@ -60,5 +64,7 @@ class PaymentStoreTest {
         verify(events).publish(event.capture());
         assertThat(event.getValue().eventType()).isEqualTo("PAYMENT_REJECTED");
         assertThat(event.getValue().failureCode()).isEqualTo("INSUFFICIENT_FUNDS");
+        assertThat(meters.get("banking.payments.finished").tag("status", "REJECTED").tag("code", "INSUFFICIENT_FUNDS")
+                .counter().count()).isEqualTo(1.0);
     }
 }

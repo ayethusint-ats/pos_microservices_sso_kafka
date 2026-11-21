@@ -22,6 +22,8 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Page<Payment> findByStatus(PaymentStatus status, Pageable pageable);
 
+    long countByStatus(PaymentStatus status);
+
     /** Phase 13: the payment an earlier request with this Idempotency-Key created. */
     Optional<Payment> findByPayerIdAndIdempotencyKey(String payerId, String idempotencyKey);
 

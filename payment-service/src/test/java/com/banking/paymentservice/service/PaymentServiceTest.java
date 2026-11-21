@@ -12,6 +12,7 @@ import com.banking.paymentservice.entity.PaymentStatus;
 import com.banking.paymentservice.exception.IdempotencyKeyReusedException;
 import com.banking.paymentservice.exception.PaymentNotCompletedException;
 import com.banking.paymentservice.repository.PaymentRepository;
+import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -69,7 +70,8 @@ class PaymentServiceTest {
     void setUp() {
         saga = new TransferSaga(accounts, store);
         service = new PaymentService(repository, store, saga,
-                new RecoveryProperties(Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofMinutes(5), 10, 20));
+                new RecoveryProperties(Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofMinutes(5), 10, 20),
+                ObservationRegistry.NOOP);
         statusesAtSaveTime.clear();
         // lenient: the Idempotency-Key replays never save anything, and that's the point.
         lenient().when(store.save(any(Payment.class))).thenAnswer(call -> {

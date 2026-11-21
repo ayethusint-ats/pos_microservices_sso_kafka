@@ -18,6 +18,8 @@ export class ApiError extends Error {
     readonly fieldErrors: Record<string, string> = {},
     /** Machine-readable reason from the service, e.g. INSUFFICIENT_FUNDS (422 responses). */
     readonly code: string | null = null,
+    /** Phase 14: the distributed trace of this request (gateway header X-Trace-Id), for Jaeger. */
+    readonly traceId: string | null = null,
   ) {
     super(detail);
   }
@@ -78,5 +80,6 @@ export function toApiError(error: HttpErrorResponse): ApiError {
     body.requestId ?? error.headers?.get('X-Request-Id') ?? null,
     body.errors ?? {},
     body.code ?? null,
+    error.headers?.get('X-Trace-Id') ?? null,
   );
 }

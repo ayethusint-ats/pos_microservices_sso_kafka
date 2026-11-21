@@ -9,6 +9,8 @@ import com.banking.paymentservice.exception.PaymentNotCompletedException;
 import com.banking.paymentservice.exception.ResourceNotFoundException;
 import com.banking.paymentservice.mapper.PaymentMapper;
 import com.banking.paymentservice.repository.PaymentRepository;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -47,12 +49,15 @@ public class PaymentService {
     private final PaymentStore store;
     private final TransferSaga saga;
     private final RecoveryProperties recovery;
+    private final ObservationRegistry observations;
 
-    public PaymentService(PaymentRepository repository, PaymentStore store, TransferSaga saga, RecoveryProperties recovery) {
+    public PaymentService(PaymentRepository repository, PaymentStore store, TransferSaga saga, RecoveryProperties recovery,
+                          ObservationRegistry observations) {
         this.repository = repository;
         this.store = store;
         this.saga = saga;
         this.recovery = recovery;
+        this.observations = observations;
     }
 
     /**
@@ -65,6 +70,35 @@ public class PaymentService {
      * @throws IdempotencyKeyReusedException the key was used before for a different request
      */
     public TransferResult transfer(String payerId, String idempotencyKey, TransferRequest request) {
+        // Phase 14: ONE Observation gives both a timer (banking_transfer_seconds{status, replayed}) and a
+        // span "transfer" in the trace, parent of the calls to account-service.
+        Observation observation = Observation.createNotStarted("banking.transfer", observations)
+                .contextualName("transfer")
+                .lowCardinalityKeyValue("idempotency_key", idempotencyKey == null ? "absent" : "present")
+                .start();
+        try (Observation.Scope ignored = observation.openScope()) {
+            TransferResult result = execute(payerId, idempotencyKey, request);
+            tag(observation, result.payment(), result.replayed());
+            return result;
+        } catch (PaymentNotCompletedException ex) {
+            tag(observation, ex.getPayment(), ex.isReplayed());
+            throw ex;
+        } catch (RuntimeException ex) {
+            observation.lowCardinalityKeyValue("status", "ERROR").lowCardinalityKeyValue("replayed", "false");
+            observation.error(ex);
+            throw ex;
+        } finally {
+            observation.stop();
+        }
+    }
+
+    private static void tag(Observation observation, PaymentResponse payment, boolean replayed) {
+        observation.lowCardinalityKeyValue("status", payment.status().name())
+                .lowCardinalityKeyValue("replayed", String.valueOf(replayed))
+                .highCardinalityKeyValue("payment.id", String.valueOf(payment.id()));   // span only, never a metric tag
+    }
+
+    private TransferResult execute(String payerId, String idempotencyKey, TransferRequest request) {
         String requestHash = fingerprint(request);
         if (idempotencyKey != null) {
             Optional<Payment> earlier = repository.findByPayerIdAndIdempotencyKey(payerId, idempotencyKey);

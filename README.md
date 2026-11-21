@@ -19,13 +19,14 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 11 | Event-driven communication with Kafka | [documentation/11-kafka-event-driven.md](documentation/11-kafka-event-driven.md) |
 | 12 | Resilience: circuit breaker, retry, bulkhead, rate limiter | [documentation/12-resilience4j.md](documentation/12-resilience4j.md) |
 | 13 | Saga, idempotency (Idempotency-Key, idempotent operations) and the transactional outbox | [documentation/13-saga-idempotency.md](documentation/13-saga-idempotency.md) |
+| 14 | Monitoring, logging and tracing: Prometheus, Grafana, OpenTelemetry, Jaeger | [documentation/14-observability.md](documentation/14-observability.md) |
 
 ## Layout
 
 ```
 banking-platform/
 ├── pom.xml                  # Root aggregator: pins Spring Boot + Spring Cloud versions
-├── docker-compose.yml       # Local infrastructure: PostgreSQL, Keycloak, Kafka (KRaft)
+├── docker-compose.yml       # Local infrastructure: PostgreSQL, Keycloak, Kafka (KRaft), Prometheus, Jaeger, Grafana
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
 ├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
@@ -37,7 +38,8 @@ banking-platform/
 ├── infrastructure/
 │   ├── keycloak/            # Realm as code + PKCE login script (Phase 4)
 │   ├── postgres/init/       # Creates one database + role per service (Phase 3)
-│   └── kafka/               # Topics as code: create-topics.sh (Phase 11)
+│   ├── kafka/               # Topics as code: create-topics.sh (Phase 11)
+│   └── monitoring/          # Prometheus scrape config + alerts, Grafana data sources + dashboard (Phase 14)
 └── documentation/
 ```
 

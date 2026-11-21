@@ -56,6 +56,9 @@ public class GatewaySecurityConfig {
                         // CORS preflight carries no token by design.
                         .pathMatchers(HttpMethod.OPTIONS, "/api/**").permitAll()
                         .pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Phase 14: Prometheus scrapes without a token. Metrics hold no customer data; the gateway never
+                        // routes /actuator, and in Kubernetes only the monitoring namespace may reach it (Phase 16).
+                        .pathMatchers("/actuator/prometheus").permitAll()
                         .pathMatchers("/actuator/**").hasRole("ADMIN")
                         // Same coarse rule as in the services: the back office is staff-only.
                         // Fine-grained rules (SUPPORT read vs ADMIN write, ownership) stay in the services.
@@ -105,7 +108,7 @@ public class GatewaySecurityConfig {
         cors.setAllowedOrigins(properties.cors().allowedOrigins());       // exact origins, never "*" for an API with auth
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"));
-        cors.setExposedHeaders(List.of("Location", "X-Request-Id", "Retry-After",
+        cors.setExposedHeaders(List.of("Location", "X-Request-Id", "X-Trace-Id", "Retry-After",
                 "X-RateLimit-Remaining", "X-RateLimit-Burst-Capacity", "X-RateLimit-Replenish-Rate"));
         cors.setAllowCredentials(false);                                  // tokens are in headers, not cookies
         cors.setMaxAge(Duration.ofHours(1));                              // browsers cache the preflight answer

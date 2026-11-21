@@ -66,8 +66,49 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: when-authorized
       roles: ADMIN
+
+---
+# Phase 14: observability. Metrics → Prometheus (/actuator/prometheus), traces → OpenTelemetry
+# (OTLP) → Jaeger, and every log line carries the trace ID.
+spring:
+  kafka:
+    template:
+      observation-enabled: true    # a span per sent record, and the W3C traceparent header on it
+    listener:
+      observation-enabled: true    # the consumer continues the producer's trace
+management:
+  observations:
+    enable:
+      # Found live: Spring Security adds ~6 spans per request per service (filter chain, authentication,
+      # authorization), about 60 % of a transfer's trace, hiding the calls that matter. Off for traces
+      # AND their metrics; authentication failures still show up as 401s in http.server.requests.
+      spring.security: false
+  metrics:
+    tags:
+      application: ${spring.application.name}   # one label to tell the services apart in Prometheus
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # histogram buckets, so Prometheus can compute p95/p99
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}   # 100 % locally; e.g. 0.1 in production
+  otlp:
+    tracing:
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
+
+---
+# JSON log lines (Elastic Common Schema) for log collectors: SPRING_PROFILES_ACTIVE=json-logs.
+# Without the profile, logs stay human-readable (with [traceId-spanId] after the level).
+spring:
+  config:
+    activate:
+      on-profile: json-logs
+logging:
+  structured:
+    format:
+      console: ecs
