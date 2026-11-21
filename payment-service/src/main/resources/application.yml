@@ -32,6 +32,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Phase 13: two scheduled jobs (outbox relay, payment recovery). With the default single thread,
+  # a relay blocked by a Kafka outage would also delay payment recovery.
+  task:
+    scheduling:
+      pool:
+        size: 2
+
   # Phase 11: Kafka producer (same settings as account-service; see its application.yml).
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -66,6 +73,22 @@ banking:
   kafka:
     topics:
       payment-events: banking.payment-events
+  # Phase 13: Transactional Outbox relay (see account-service for the meaning of each value).
+  outbox:
+    poll-interval-ms: 500
+    batch-size: 100
+    send-timeout: 5s
+    retention: 7d
+  # Phase 13: PaymentRecoveryJob finishes unfinished payments (PENDING / DEBITED / COMPENSATING).
+  payments:
+    recovery:
+      poll-interval-ms: 5000
+      initial-delay-ms: 10000
+      grace-period: 30s       # > a request's worst case (≈ 17 s): the job never races a live request
+      initial-backoff: 10s    # then 20 s, 40 s, ... up to max-backoff
+      max-backoff: 5m
+      max-attempts: 10        # ≈ 25 min of trying, then NEEDS_RECONCILIATION (a person)
+      batch-size: 20
   security:
     jwt:
       issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}
@@ -78,12 +101,16 @@ banking:
       # Direct to the service, NOT through the public gateway (no second rate limit, no CORS, one hop less).
       base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
       connect-timeout: 1s
-      # Timeout budget (Phase 12, with retries), worst case for one transfer:
-      #   2 reads × (2 attempts × 2 s + 0.1 s)          8.2 s
-      #   debit 2 s + credit 2 s (no retry on timeout)   4.0 s
-      #   refund 2 s + backoff of fast failures ~1.4 s   3.4 s   → ≈ 15.6 s
+      # Timeout budget (Phase 13: writes are idempotent, so they're retried after timeouts too),
+      # worst case for one transfer:
+      #   2 reads × (2 attempts × 2 s + 0.1 s)                  8.2 s
+      #   debit: 2 attempts × 2 s + 0.2 s                       4.2 s
+      #   then EITHER resolve-debit (debit unknown)             4.2 s
+      #       OR credit 4.2 s (+ refund 4.5 s only after a fast 422)   ≤ 4.5 s
+      #                                                       ≈ 17 s
       # Must stay below the gateway's response timeout for /api/payments (20 s), otherwise the
-      # client sees 504 while the transfer is still running. An OPEN breaker cuts this to milliseconds.
+      # client sees 504 while the transfer is still running. Anything not finished in time is left
+      # to PaymentRecoveryJob, whose grace period (30 s) starts after this budget.
       read-timeout: 2s
 
 # Phase 12: resilience policy for calls to account-service (see AccountServiceResilience).
@@ -119,13 +146,13 @@ resilience4j:
         max-attempts: 2                       # 1 try + 1 retry
         wait-duration: 100ms
       accountServiceWrite:
-        max-attempts: 2                       # only for "certainly not executed"
+        max-attempts: 2                       # Phase 13: idempotent, so also after timeouts
         wait-duration: 200ms
       accountServiceCompensation:
-        max-attempts: 4                       # a refund must try hard: 200 ms, 400 ms, 800 ms
-        wait-duration: 200ms
-        enable-exponential-backoff: true
-        exponential-backoff-multiplier: 2
+        # Phase 12 tried 4 times here. Now the recovery job keeps trying for ~25 min, so the
+        # request only tries twice and stays inside its timeout budget.
+        max-attempts: 2
+        wait-duration: 500ms
   bulkhead:
     instances:
       accountService:

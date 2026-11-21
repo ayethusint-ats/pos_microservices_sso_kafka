@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -60,6 +60,7 @@ export interface Account {
 export type PaymentStatus =
   | 'PENDING'
   | 'DEBITED'
+  | 'COMPENSATING'
   | 'COMPLETED'
   | 'REJECTED'
   | 'FAILED'
@@ -159,11 +160,17 @@ export class ApiService {
   }
 
   /**
-   * 201 → COMPLETED, 202 → NEEDS_RECONCILIATION (both arrive here as a Payment).
+   * 201 → COMPLETED; 202 → still in progress (PENDING / DEBITED / COMPENSATING: the bank finishes it)
+   * or NEEDS_RECONCILIATION. Both arrive here as a Payment.
    * 422/503 → ApiError: the transfer did not happen.
+   *
+   * Phase 13: the Idempotency-Key makes a retry of the SAME transfer safe: payment-service returns
+   * the first request's outcome instead of transferring twice.
    */
-  transfer(request: TransferRequest): Observable<Payment> {
-    return this.http.post<Payment>(`${this.base}/api/payments`, request);
+  transfer(request: TransferRequest, idempotencyKey: string): Observable<Payment> {
+    return this.http.post<Payment>(`${this.base}/api/payments`, request, {
+      headers: new HttpHeaders({ 'Idempotency-Key': idempotencyKey }),
+    });
   }
 
   myPayments(page = 0, size = 20): Observable<Page<Payment>> {

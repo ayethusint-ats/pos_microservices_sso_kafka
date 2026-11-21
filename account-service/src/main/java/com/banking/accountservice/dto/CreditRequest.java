@@ -9,7 +9,7 @@ import java.util.UUID;
 
 /**
  * Body of the internal credit call. {@code paymentId} ties the ledger change to the payment that
- * caused it: an audit trail now, and the idempotency key in Phase 13.
+ * caused it, and is the idempotency key (Phase 13): the same payment is never credited twice.
  */
 public record CreditRequest(
         @NotNull @Positive @Digits(integer = 15, fraction = 2) BigDecimal amount,

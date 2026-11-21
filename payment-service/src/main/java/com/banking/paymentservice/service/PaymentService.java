@@ -1,198 +1,137 @@
 package com.banking.paymentservice.service;
 
-import com.banking.paymentservice.client.AccountRejectedException;
-import com.banking.paymentservice.client.AccountServiceClient;
-import com.banking.paymentservice.client.AccountServiceUnavailableException;
-import com.banking.paymentservice.client.AccountView;
 import com.banking.paymentservice.dto.PaymentResponse;
 import com.banking.paymentservice.dto.TransferRequest;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
-import com.banking.paymentservice.events.PaymentEvent;
-import com.banking.paymentservice.events.PaymentEventPublisher;
+import com.banking.paymentservice.exception.IdempotencyKeyReusedException;
 import com.banking.paymentservice.exception.PaymentNotCompletedException;
 import com.banking.paymentservice.exception.ResourceNotFoundException;
 import com.banking.paymentservice.mapper.PaymentMapper;
 import com.banking.paymentservice.repository.PaymentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Orchestrates a transfer: validate both accounts, debit the source, credit the target.
- *
- * <p>Phase 10, two identities in one flow:
- * <pre>
- *   read source, debit source      customer's token   account-service: "is it Alice's account?"
- *   find recipient, credit, refund payment-service's   account-service: "may this APPLICATION credit?"
- * </pre>
+ * Entry point for transfers: Idempotency-Key handling, then the saga ({@link TransferSaga}).
  *
  * <p>Why this class is NOT {@code @Transactional}: the money moves in ANOTHER service's
- * database. No local transaction can make "debit in account_db + credit in account_db +
- * record in payment_db" atomic. Holding a DB transaction open while waiting on HTTP would
- * only tie up a connection and lock rows for nothing. So each step is saved on its own
- * ({@code repository.save} runs in its own short transaction), and the payment record tells
- * exactly how far we got.
+ * database. Each saga step is saved in its own short transaction ({@link PaymentStore}), and the
+ * payment record tells exactly how far the transfer got.
  *
- * <p>What happens when a step fails is the core lesson of Phase 9; see {@link PaymentStatus}.
- * The fix for "we don't know if it happened" is idempotency + a saga (Phase 13).
+ * <p>Two layers of idempotency (Phase 13):
+ * <pre>
+ *   client  ──Idempotency-Key──►  payment-service   same key → same payment, executed once
+ *   payment-service ──payment ID──► account-service  same payment → each money movement once
+ * </pre>
  */
 @Service
 public class PaymentService {
 
-    static final String ACCOUNT_SERVICE_UNAVAILABLE = "ACCOUNT_SERVICE_UNAVAILABLE";
-
-    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
     private static final Logger audit = LoggerFactory.getLogger("AUDIT");
 
     private final PaymentRepository repository;
-    private final AccountServiceClient accounts;
-    private final PaymentEventPublisher events;
+    private final PaymentStore store;
+    private final TransferSaga saga;
+    private final RecoveryProperties recovery;
 
-    public PaymentService(PaymentRepository repository, AccountServiceClient accounts, PaymentEventPublisher events) {
+    public PaymentService(PaymentRepository repository, PaymentStore store, TransferSaga saga, RecoveryProperties recovery) {
         this.repository = repository;
-        this.accounts = accounts;
-        this.events = events;
+        this.store = store;
+        this.saga = saga;
+        this.recovery = recovery;
     }
 
     /**
-     * @return the payment when it COMPLETED or NEEDS_RECONCILIATION (the request was accepted,
-     *         but its outcome is still being determined)
+     * @param idempotencyKey optional; when the same customer sends the same key again, the payment
+     *                       created by the first request is returned and nothing is executed again
+     * @return the payment when it COMPLETED, or is still in progress (PENDING / DEBITED /
+     *         COMPENSATING: the recovery job finishes it) or NEEDS_RECONCILIATION
      * @throws PaymentNotCompletedException when the transfer did not happen (REJECTED, FAILED,
      *         REVERSED). The payment is still recorded, and the exception carries it.
+     * @throws IdempotencyKeyReusedException the key was used before for a different request
      */
-    public PaymentResponse transfer(String payerId, TransferRequest request) {
-        // Record the intent FIRST. If anything later crashes, there is a trace to investigate.
-        Payment payment = repository.save(new Payment(payerId, request.sourceAccountId(),
-                request.targetAccountNumber(), request.amount(), request.description()));
+    public TransferResult transfer(String payerId, String idempotencyKey, TransferRequest request) {
+        String requestHash = fingerprint(request);
+        if (idempotencyKey != null) {
+            Optional<Payment> earlier = repository.findByPayerIdAndIdempotencyKey(payerId, idempotencyKey);
+            if (earlier.isPresent()) {
+                return replay(earlier.get(), idempotencyKey, requestHash);
+            }
+        }
 
-        payment = execute(payment);
+        // Record the intent FIRST. If anything later crashes, the recovery job finds it.
+        Payment payment = new Payment(payerId, request.sourceAccountId(), request.targetAccountNumber(),
+                request.amount(), request.description(), idempotencyKey, requestHash);
+        payment.scheduleRecovery(Instant.now().plus(recovery.gracePeriod()));
+        try {
+            payment = store.save(payment);
+        } catch (DataIntegrityViolationException duplicate) {
+            // The same key arrived twice at the same moment (double click, client retry racing
+            // the original). The unique constraint let exactly one request create the payment.
+            if (idempotencyKey == null) {
+                throw duplicate;
+            }
+            Payment winner = repository.findByPayerIdAndIdempotencyKey(payerId, idempotencyKey).orElseThrow(() -> duplicate);
+            return replay(winner, idempotencyKey, requestHash);
+        }
+
+        payment = saga.start(payment);
 
         audit.info("payment={} payer={} {} -> {} amount={} {} status={} code={}",
                 payment.getId(), payerId, payment.getSourceAccountId(), payment.getTargetAccountNumber(),
                 payment.getAmount(), payment.getCurrency(), payment.getStatus(), payment.getFailureCode());
-
-        // Phase 11: tell the rest of the bank (notifications now, more later) without calling anyone.
-        events.publish(PaymentEvent.of(payment));
-
-        PaymentResponse response = PaymentMapper.toResponse(payment);
-        if (payment.getStatus() == PaymentStatus.COMPLETED || payment.getStatus() == PaymentStatus.NEEDS_RECONCILIATION) {
-            return response;
-        }
-        throw new PaymentNotCompletedException(response,
-                ACCOUNT_SERVICE_UNAVAILABLE.equals(payment.getFailureCode()));
+        return outcome(payment, false);
     }
 
-    private Payment execute(Payment payment) {
-        // ---- Step 1: validate (reads only; nothing can go half-wrong yet) -------------------
-        AccountView source;
-        AccountView target;
-        try {
-            // Customer's token: 404 also means "not yours" (account-service checks ownership).
-            source = accounts.getOwnAccount(payment.getSourceAccountId());
-        } catch (AccountRejectedException ex) {
-            return reject(payment, ex.isNotFound() ? "SOURCE_ACCOUNT_NOT_FOUND" : ex.getCode(), ex.getMessage());
-        } catch (AccountServiceUnavailableException ex) {
-            return fail(payment, ex);
+    private TransferResult replay(Payment earlier, String key, String requestHash) {
+        if (!requestHash.equals(earlier.getRequestHash())) {
+            throw new IdempotencyKeyReusedException(key);
         }
-        try {
-            // Service token (Phase 10): the recipient may be ANOTHER customer's account.
-            target = accounts.findRecipient(payment.getTargetAccountNumber());
-        } catch (AccountRejectedException ex) {
-            return reject(payment, ex.isNotFound() ? "TARGET_ACCOUNT_NOT_FOUND" : ex.getCode(), ex.getMessage());
-        } catch (AccountServiceUnavailableException ex) {
-            return fail(payment, ex);
-        }
+        audit.info("payment={} payer={} replayed for Idempotency-Key={} status={}",
+                earlier.getId(), earlier.getPayerId(), key, earlier.getStatus());
+        return outcome(earlier, true);
+    }
 
-        if (source.id().equals(target.id())) {
-            return reject(payment, "SAME_ACCOUNT", "Source and target account are the same");
-        }
-        if (!source.currency().equals(target.currency())) {
-            return reject(payment, "CURRENCY_MISMATCH", "Source account is in %s, target account is in %s"
-                    .formatted(source.currency(), target.currency()));
-        }
-        if (!target.isActive()) {
-            // Checked up front because a failing credit would force a refund later.
-            // The source's status and balance are NOT pre-checked: the withdraw itself enforces them
-            // atomically in account-service, which is the only reliable place to do it.
-            return reject(payment, "TARGET_ACCOUNT_NOT_ACTIVE", "Target account cannot receive payments");
-        }
-        payment.accountsResolved(target.id(), source.currency());
-
-        // ---- Step 2: debit the source (customer's token = the customer's consent) --------------
-        try {
-            accounts.debit(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
-        } catch (AccountRejectedException ex) {
-            return reject(payment, ex.getCode(), ex.getMessage());       // e.g. INSUFFICIENT_FUNDS
-        } catch (AccountServiceUnavailableException ex) {
-            if (ex.isOutcomeUnknown()) {
-                // Timeout or 5xx after the request was sent: the money may already be gone.
-                // Retrying blindly could debit twice, giving up could lose the debit. Escalate.
-                return reconcile(payment, "DEBIT_OUTCOME_UNKNOWN", ex);
-            }
-            return fail(payment, ex);
-        }
-        payment.markDebited();
-        payment = repository.save(payment);   // the "money is in flight" checkpoint
-
-        // ---- Step 3: credit the target (service token) ------------------------------------------
-        try {
-            accounts.credit(payment.getTargetAccountId(), payment.getAmount(), payment.getId());
-            payment.complete();
-            return repository.save(payment);
-        } catch (AccountServiceUnavailableException ex) {
-            if (ex.isOutcomeUnknown()) {
-                // The credit might have happened. Refunding now could pay the amount out twice.
-                return reconcile(payment, "CREDIT_OUTCOME_UNKNOWN", ex);
-            }
-            return compensate(payment, ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        } catch (AccountRejectedException ex) {
-            // e.g. the target was frozen between our check and the credit.
-            return compensate(payment, ex.getCode(), ex.getMessage());
-        }
+    /** The same mapping for a first answer and for a replay: the client sees the same outcome both times. */
+    private static TransferResult outcome(Payment payment, boolean replayed) {
+        PaymentResponse response = PaymentMapper.toResponse(payment);
+        return switch (payment.getStatus()) {
+            case COMPLETED, PENDING, DEBITED, COMPENSATING, NEEDS_RECONCILIATION -> new TransferResult(response, replayed);
+            case FAILED -> throw new PaymentNotCompletedException(response, true, replayed);   // nothing moved: retry later
+            case REJECTED, REVERSED -> throw new PaymentNotCompletedException(response, false, replayed);
+        };
     }
 
     /**
-     * The credit certainly failed after the debit succeeded: give the money back to the source.
-     * This compensating action is the seed of the Saga pattern (Phase 13).
+     * What makes two requests "the same": every field that changes what happens. SHA-256 so the
+     * stored value has a fixed size and reveals nothing new (the payment row has the fields anyway).
      */
-    private Payment compensate(Payment payment, String creditFailureCode, String creditFailure) {
+    static String fingerprint(TransferRequest request) {
+        String canonical = String.join("|",
+                request.sourceAccountId().toString(),
+                request.targetAccountNumber(),
+                request.amount().stripTrailingZeros().toPlainString(),   // 10, 10.0 and 10.00 are the same amount
+                request.description() == null ? "" : request.description());
         try {
-            // Service token: works even if the customer's token expired in the meantime.
-            accounts.refund(payment.getSourceAccountId(), payment.getAmount(), payment.getId());
-            payment.reverse(creditFailureCode,
-                    "Credit to target failed (%s); the amount was returned to the source account".formatted(creditFailure));
-            return repository.save(payment);
-        } catch (AccountRejectedException | AccountServiceUnavailableException refundFailure) {
-            // Worst case: debited, not credited, not refunded. Only a human (or Phase 13) can fix it.
-            log.error("Refund failed for payment {}: money debited but neither credited nor returned",
-                    payment.getId(), refundFailure);
-            payment.requireReconciliation("REFUND_FAILED",
-                    "Credit failed (%s) and the refund failed (%s)".formatted(creditFailure, refundFailure.getMessage()));
-            return repository.save(payment);
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is always available", ex);
         }
-    }
-
-    private Payment reject(Payment payment, String code, String reason) {
-        payment.reject(code, reason);
-        return repository.save(payment);
-    }
-
-    private Payment fail(Payment payment, AccountServiceUnavailableException ex) {
-        log.warn("Payment {} failed, nothing was moved: {}", payment.getId(), ex.getMessage());
-        payment.fail(ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        return repository.save(payment);
-    }
-
-    private Payment reconcile(Payment payment, String code, AccountServiceUnavailableException ex) {
-        log.error("Payment {} needs reconciliation ({}): {}", payment.getId(), code, ex.getMessage(), ex);
-        payment.requireReconciliation(code, ex.getMessage());
-        return repository.save(payment);
     }
 
     // ------------------------------------------------------------------ queries

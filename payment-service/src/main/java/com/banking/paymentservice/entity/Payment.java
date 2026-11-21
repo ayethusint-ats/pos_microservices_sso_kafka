@@ -72,6 +72,20 @@ public class Payment {
     @Column(length = MAX_REASON_LENGTH)
     private String failureReason;
 
+    /** Phase 13: the client's Idempotency-Key (unique per payer). null if the client sent none. */
+    @Column(updatable = false, length = 100)
+    private String idempotencyKey;
+
+    /** SHA-256 of the request: the same key with a DIFFERENT request is refused. */
+    @Column(updatable = false, length = 64)
+    private String requestHash;
+
+    /** When the recovery job may next work on this payment. null once the payment is final. */
+    private Instant nextRecoveryAt;
+
+    @Column(nullable = false)
+    private int recoveryAttempts;
+
     @Version
     private long version;
 
@@ -88,6 +102,13 @@ public class Payment {
     }
 
     public Payment(String payerId, UUID sourceAccountId, String targetAccountNumber, BigDecimal amount, String description) {
+        this(payerId, sourceAccountId, targetAccountNumber, amount, description, null, null);
+    }
+
+    public Payment(String payerId, UUID sourceAccountId, String targetAccountNumber, BigDecimal amount, String description,
+                   String idempotencyKey, String requestHash) {
+        this.idempotencyKey = idempotencyKey;
+        this.requestHash = requestHash;
         this.payerId = Objects.requireNonNull(payerId);
         this.sourceAccountId = Objects.requireNonNull(sourceAccountId);
         this.targetAccountNumber = Objects.requireNonNull(targetAccountNumber);
@@ -128,8 +149,39 @@ public class Payment {
         moveTo(PaymentStatus.FAILED, code, reason);
     }
 
-    public void reverse(String code, String reason) {
-        moveTo(PaymentStatus.REVERSED, code, reason);
+    /** The credit was refused after the debit: the money must go back. Keeps the credit's failure reason. */
+    public void startCompensation(String creditFailureCode, String creditFailure) {
+        moveTo(PaymentStatus.COMPENSATING, creditFailureCode, "Credit to target failed (%s)".formatted(creditFailure));
+    }
+
+    /** The refund succeeded. The failure code/reason still explain WHY the transfer was reversed. */
+    public void reverse() {
+        moveTo(PaymentStatus.REVERSED, failureCode, failureReason + "; the amount was returned to the source account");
+    }
+
+    /** Something went wrong but the saga isn't over (e.g. CREDIT_OUTCOME_UNKNOWN): visible to support and the customer. */
+    public void noteIssue(String code, String reason) {
+        if (status.isFinal()) {
+            throw new IllegalStateException("Payment %s is already final".formatted(id));
+        }
+        this.failureCode = code;
+        this.failureReason = truncate(reason);
+    }
+
+    // ------------------------------------------------------------------ recovery (Phase 13)
+
+    /** The live request has until {@code at} to finish; after that the recovery job may take over. */
+    public void scheduleRecovery(Instant at) {
+        this.nextRecoveryAt = at;
+    }
+
+    /** Claimed by the recovery job: count the attempt and set when the next one may happen. */
+    public void recoveryAttempted(Instant nextAttemptAt) {
+        if (status.isFinal()) {
+            throw new IllegalStateException("Payment %s is already final".formatted(id));
+        }
+        this.recoveryAttempts++;
+        this.nextRecoveryAt = nextAttemptAt;
     }
 
     public void requireReconciliation(String code, String reason) {
@@ -143,6 +195,9 @@ public class Payment {
         this.status = next;
         this.failureCode = code;
         this.failureReason = truncate(reason);
+        if (next.isFinal()) {
+            this.nextRecoveryAt = null;   // nothing left to recover
+        }
     }
 
     private static String truncate(String text) {
@@ -193,6 +248,22 @@ public class Payment {
 
     public String getFailureReason() {
         return failureReason;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public String getRequestHash() {
+        return requestHash;
+    }
+
+    public Instant getNextRecoveryAt() {
+        return nextRecoveryAt;
+    }
+
+    public int getRecoveryAttempts() {
+        return recoveryAttempts;
     }
 
     public long getVersion() {

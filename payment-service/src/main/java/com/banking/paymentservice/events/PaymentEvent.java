@@ -8,7 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Published to {@code banking.payment-events} when a payment reaches a final status.
+ * Published to {@code banking.payment-events} when a payment reaches a final status (exactly one
+ * per payment: final statuses never change). Unfinished statuses aren't announced.
  * Key = paymentId. Public contract: add fields freely, never rename/remove without a new schemaVersion.
  *
  * @param eventType PAYMENT_COMPLETED, PAYMENT_REJECTED, PAYMENT_FAILED, PAYMENT_REVERSED,

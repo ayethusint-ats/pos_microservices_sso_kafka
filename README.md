@@ -18,6 +18,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 10 | Client Credentials: a service's own identity | [documentation/10-client-credentials.md](documentation/10-client-credentials.md) |
 | 11 | Event-driven communication with Kafka | [documentation/11-kafka-event-driven.md](documentation/11-kafka-event-driven.md) |
 | 12 | Resilience: circuit breaker, retry, bulkhead, rate limiter | [documentation/12-resilience4j.md](documentation/12-resilience4j.md) |
+| 13 | Saga, idempotency (Idempotency-Key, idempotent operations) and the transactional outbox | [documentation/13-saga-idempotency.md](documentation/13-saga-idempotency.md) |
 
 ## Layout
 
@@ -29,8 +30,8 @@ banking-platform/
 ├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
-├── account-service/         # Accounts and balances (Phase 2)
-├── payment-service/         # Transfers :8083, calls account-service over REST (Phase 9); Saga, idempotency (Phase 13)
+├── account-service/         # Accounts and balances (Phase 2); idempotent payment ledger, outbox (Phase 13)
+├── payment-service/         # Transfers :8083, calls account-service over REST (Phase 9); saga, Idempotency-Key, recovery job, outbox (Phase 13)
 ├── transaction-service/     # Statements :8084, built from account events on Kafka (Phase 11)
 ├── notification-service/    # Simulated e-mails :8085, driven by Kafka events (Phase 11)
 ├── infrastructure/

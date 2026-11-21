@@ -2,6 +2,7 @@ package com.banking.accountservice.controller;
 
 import com.banking.accountservice.dto.AccountSummary;
 import com.banking.accountservice.dto.CreditRequest;
+import com.banking.accountservice.dto.DebitResolution;
 import com.banking.accountservice.security.Authorization.CallingClient;
 import com.banking.accountservice.security.Authorization.InternalTransfers;
 import com.banking.accountservice.service.AccountService;
@@ -19,7 +20,8 @@ import java.util.UUID;
 /**
  * Machine-to-machine API for payment-service (Client Credentials token).
  *
- * <p>Deliberately NARROW: find a recipient by account number, and credit an account.
+ * <p>Deliberately NARROW: find a recipient by account number, credit an account for a debited
+ * payment, and (Phase 13) resolve a payment's debit.
  * There is no internal "withdraw": taking money out still requires the customer's own token
  * on {@code /api/accounts/{id}/withdraw}, so even a compromised payment-service can't
  * empty an account on its own.
@@ -47,5 +49,14 @@ public class InternalAccountController {
     public AccountSummary credit(@CallingClient String clientId, @PathVariable UUID id,
                                  @Valid @RequestBody CreditRequest request) {
         return accountService.creditForPayment(id, request.amount(), request.paymentId(), request.refund(), clientId);
+    }
+
+    /**
+     * Phase 13: "was payment X debited?" If not, it never will be (the debit is VOIDed).
+     * POST, not GET: it may write the VOID marker. Idempotent: asking again gives the same answer.
+     */
+    @PostMapping("/debits/{paymentId}/resolve")
+    public DebitResolution resolveDebit(@CallingClient String clientId, @PathVariable UUID paymentId) {
+        return accountService.resolveDebit(paymentId, clientId);
     }
 }

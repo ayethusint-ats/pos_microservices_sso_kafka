@@ -17,8 +17,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>Why: profiles created before events existed (Phases 2–10), or whose event was lost (Kafka down
  * right after the commit), would otherwise never reach consumers. On a compacted topic re-publishing
- * is harmless: it simply rewrites the latest value per key. It's a cheap self-healing step, not a
- * replacement for the outbox (Phase 13).
+ * is harmless: it simply rewrites the latest value per key. It's a cheap self-healing step, and the
+ * reason user-service kept after-commit publishing in Phase 13: money events (account-service,
+ * payment-service) can't heal like this, so they use a transactional outbox instead.
  */
 @Component
 @ConditionalOnProperty(name = "banking.kafka.publish-customer-snapshot-on-startup", havingValue = "true", matchIfMissing = true)

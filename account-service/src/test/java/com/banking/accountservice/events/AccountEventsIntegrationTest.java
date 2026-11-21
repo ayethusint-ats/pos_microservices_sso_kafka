@@ -83,7 +83,7 @@ class AccountEventsIntegrationTest {
         UUID paymentId = UUID.randomUUID();
         accountService.withdraw(account.id(), ALICE_ID, new BigDecimal("40"), paymentId);
 
-        List<ConsumerRecord<String, String>> records = poll(2);
+        List<ConsumerRecord<String, String>> records = poll(2, account.id());
 
         assertThat(records).extracting(ConsumerRecord::key).containsOnly(account.id().toString());
         JsonNode deposit = objectMapper.readTree(records.get(0).value());
@@ -106,23 +106,35 @@ class AccountEventsIntegrationTest {
         assertThatThrownBy(() -> accountService.withdraw(account.id(), ALICE_ID, new BigDecimal("1")))
                 .isInstanceOf(InsufficientFundsException.class);
 
-        assertThat(poll(0)).isEmpty();
+        assertThat(poll(0, account.id())).isEmpty();
     }
 
     @Test
     void refundIsLabelledAsSuch() throws Exception {
         AccountResponse account = accountService.open(ALICE_ID, AccountType.SAVINGS, "THB", ALICE_ID);
-        accountService.creditForPayment(account.id(), new BigDecimal("5"), UUID.randomUUID(), true, "payment-service");
+        accountService.deposit(account.id(), ALICE_ID, new BigDecimal("10"));
+        UUID paymentId = UUID.randomUUID();
+        accountService.withdraw(account.id(), ALICE_ID, new BigDecimal("5"), paymentId);   // Phase 13: refund needs a debit
+        accountService.creditForPayment(account.id(), new BigDecimal("5"), paymentId, true, "payment-service");
 
-        assertThat(objectMapper.readTree(poll(1).getFirst().value()).path("kind").asText()).isEqualTo("REFUND");
+        List<ConsumerRecord<String, String>> records = poll(3, account.id());
+        assertThat(records).extracting(r -> objectMapper.readTree(r.value()).path("kind").asText())
+                .containsExactly("DEPOSIT", "TRANSFER_OUT", "REFUND");
     }
 
-    /** Polls until {@code expected} records arrived (or 3 s for "expect none"). */
-    private List<ConsumerRecord<String, String>> poll(int expected) {
+    /**
+     * Polls until {@code expected} records OF THIS ACCOUNT arrived (or 3 s for "expect none").
+     * Filtered by key: since Phase 13 the outbox relay may still deliver other tests' events.
+     */
+    private List<ConsumerRecord<String, String>> poll(int expected, UUID accountId) {
         List<ConsumerRecord<String, String>> records = new ArrayList<>();
         long deadline = System.currentTimeMillis() + (expected == 0 ? 3_000 : 15_000);
         while (System.currentTimeMillis() < deadline && (expected == 0 || records.size() < expected)) {
-            consumer.poll(Duration.ofMillis(200)).forEach(records::add);
+            consumer.poll(Duration.ofMillis(200)).forEach(r -> {
+                if (r.key().equals(accountId.toString())) {
+                    records.add(r);
+                }
+            });
         }
         return records;
     }

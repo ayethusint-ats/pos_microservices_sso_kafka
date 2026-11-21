@@ -3,6 +3,7 @@ package com.banking.paymentservice.entity;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,7 +36,35 @@ class PaymentTest {
     @Test
     void cannotReverseBeforeAnythingWasDebited() {
         Payment payment = newPayment();
-        assertThatThrownBy(() -> payment.reverse("X", "y")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(payment::reverse).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aRefusedCreditIsCompensatedThroughCompensating() {
+        Payment payment = newPayment();
+        payment.markDebited();
+        assertThatThrownBy(payment::reverse).isInstanceOf(IllegalStateException.class);   // refund first
+
+        payment.startCompensation("ACCOUNT_NOT_ACTIVE", "frozen");
+        assertThat(payment.getStatus().isFinal()).isFalse();
+        payment.reverse();
+
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REVERSED);
+        assertThat(payment.getFailureCode()).isEqualTo("ACCOUNT_NOT_ACTIVE");          // why it was reversed
+        assertThat(payment.getFailureReason()).contains("frozen").contains("returned to the source account");
+    }
+
+    @Test
+    void reachingAFinalStatusEndsRecovery() {
+        Payment payment = newPayment();
+        payment.scheduleRecovery(Instant.now());
+        payment.recoveryAttempted(Instant.now().plusSeconds(10));
+        assertThat(payment.getRecoveryAttempts()).isEqualTo(1);
+
+        payment.fail("DEBIT_NOT_APPLIED", "voided");
+
+        assertThat(payment.getNextRecoveryAt()).isNull();
+        assertThatThrownBy(() -> payment.recoveryAttempted(Instant.now())).isInstanceOf(IllegalStateException.class);
     }
 
     @Test

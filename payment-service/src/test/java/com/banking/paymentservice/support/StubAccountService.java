@@ -41,6 +41,9 @@ public final class StubAccountService implements AutoCloseable {
     }
 
     public static final String TOKEN_PATH = "/token";
+    /** Phase 13: every payment's resolve call shares one route ({@code *} = the payment ID). */
+    public static final String RESOLVE_PATH = "/internal/accounts/debits/*/resolve";
+    private static final java.util.regex.Pattern RESOLVE = java.util.regex.Pattern.compile("^/internal/accounts/debits/([^/]+)/resolve$");
     public static final String SERVICE_TOKEN = "service-access-token";
 
     private final HttpServer server;
@@ -139,6 +142,13 @@ public final class StubAccountService implements AutoCloseable {
         }
     }
 
+    /** Phase 13: account-service's answer to "was this payment debited?" for ANY payment. */
+    public void debitResolution(String outcome, UUID debitedAccount, String amount) {
+        reply("POST", RESOLVE_PATH, 200, "APPLIED".equals(outcome)
+                ? "{\"paymentId\":\"{paymentId}\",\"outcome\":\"APPLIED\",\"accountId\":\"%s\",\"amount\":%s}".formatted(debitedAccount, amount)
+                : "{\"paymentId\":\"{paymentId}\",\"outcome\":\"VOIDED\"}");
+    }
+
     public void reply(String method, String path, int status, String body) {
         replies.put(method + " " + path, new Reply(status, body, Duration.ZERO));
     }
@@ -171,9 +181,11 @@ public final class StubAccountService implements AutoCloseable {
 
         Reply notFound = new Reply(404,
                 "{\"title\":\"Resource not found\",\"status\":404,\"detail\":\"Account not found\"}", Duration.ZERO);
-        java.util.Queue<Reply> once = onceReplies.get(method + " " + path);
+        java.util.regex.Matcher resolve = RESOLVE.matcher(path);
+        String route = method + " " + (resolve.matches() ? RESOLVE_PATH : path);
+        java.util.Queue<Reply> once = onceReplies.get(route);
         Reply oneShot = once == null ? null : once.poll();
-        Reply reply = oneShot != null ? oneShot : replies.getOrDefault(method + " " + path, notFound);
+        Reply reply = oneShot != null ? oneShot : replies.getOrDefault(route, notFound);
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         if (reply.requiredToken() != null && !("Bearer " + reply.requiredToken()).equals(authorization)) {
             reply = notFound;
@@ -185,7 +197,8 @@ public final class StubAccountService implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        byte[] bytes = reply.body().getBytes(StandardCharsets.UTF_8);
+        String replyBody = resolve.matches() ? reply.body().replace("{paymentId}", resolve.group(1)) : reply.body();
+        byte[] bytes = replyBody.getBytes(StandardCharsets.UTF_8);
         boolean tokenEndpoint = path.equals(TOKEN_PATH);
         exchange.getResponseHeaders().add("Content-Type",
                 reply.status() >= 400 && !tokenEndpoint ? "application/problem+json" : "application/json");

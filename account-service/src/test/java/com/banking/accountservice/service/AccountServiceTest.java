@@ -3,9 +3,10 @@ package com.banking.accountservice.service;
 import com.banking.accountservice.dto.AccountResponse;
 import com.banking.accountservice.entity.Account;
 import com.banking.accountservice.entity.AccountType;
+import com.banking.accountservice.events.AccountEventPublisher;
 import com.banking.accountservice.events.AccountTransactionEvent;
 import com.banking.accountservice.events.TransactionKind;
-import org.springframework.context.ApplicationEventPublisher;
+import com.banking.accountservice.repository.PaymentOperationRepository;
 import com.banking.accountservice.exception.ResourceNotFoundException;
 import com.banking.accountservice.exception.UnsupportedCurrencyException;
 import com.banking.accountservice.mapper.AccountMapper;
@@ -38,13 +39,16 @@ class AccountServiceTest {
     private AccountNumberGenerator accountNumberGenerator;
 
     @Mock
-    private ApplicationEventPublisher events;
+    private PaymentOperationRepository operations;
+
+    @Mock
+    private AccountEventPublisher events;
 
     private AccountService accountService;
 
     @BeforeEach
     void setUp() {
-        accountService = new AccountService(accountRepository, accountNumberGenerator, new AccountMapper(), events);
+        accountService = new AccountService(accountRepository, accountNumberGenerator, new AccountMapper(), operations, events);
     }
 
     // ---------------------------------------------------------------- events (Phase 11)
@@ -60,7 +64,7 @@ class AccountServiceTest {
         accountService.withdraw(id, "alice", new BigDecimal("30"), paymentId);
 
         ArgumentCaptor<AccountTransactionEvent> event = ArgumentCaptor.forClass(AccountTransactionEvent.class);
-        verify(events).publishEvent(event.capture());
+        verify(events).publish(event.capture());
         assertThat(event.getValue().kind()).isEqualTo(TransactionKind.TRANSFER_OUT);
         assertThat(event.getValue().direction()).isEqualTo("DEBIT");
         assertThat(event.getValue().amount()).hasToString("30.00");
@@ -77,7 +81,7 @@ class AccountServiceTest {
 
         assertThatThrownBy(() -> accountService.withdraw(id, "alice", BigDecimal.TEN))
                 .isInstanceOf(com.banking.accountservice.exception.InsufficientFundsException.class);
-        verify(events, never()).publishEvent(any(Object.class));
+        verify(events, never()).publish(any());
     }
 
     @Test

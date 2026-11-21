@@ -26,8 +26,16 @@ export class PaymentsPage implements OnInit {
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly error = signal<ApiError | null>(null);
-  /** Result of the last transfer that reached a status (COMPLETED or NEEDS_RECONCILIATION). */
+  /** Result of the last accepted transfer: COMPLETED, still in progress, or NEEDS_RECONCILIATION. */
   protected readonly lastPayment = signal<Payment | null>(null);
+
+  /**
+   * Phase 13: the Idempotency-Key of a transfer that got NO answer (network error, gateway timeout).
+   * Pressing "Transfer" again for the same form sends the same key, so the server returns the first
+   * attempt's outcome instead of transferring twice. Any real answer ends the attempt: a new
+   * transfer (or a retry after 503 "nothing moved") gets a new key.
+   */
+  private unanswered: { key: string; form: string } | null = null;
 
   protected readonly activeAccounts = computed(() => this.accounts().filter((a) => a.status === 'ACTIVE'));
   /** For the history: "own account" vs "someone else's". */
@@ -51,18 +59,25 @@ export class PaymentsPage implements OnInit {
     if (!this.sourceAccountId || !this.targetAccountNumber || !this.amount) {
       return;
     }
+    const request = {
+      sourceAccountId: this.sourceAccountId,
+      targetAccountNumber: this.targetAccountNumber.trim(),
+      amount: this.amount,
+      description: this.description,
+    };
+    const form = JSON.stringify(request);
+    // Same form after an unanswered attempt → same key. Anything else → a new transfer, a new key.
+    const key = this.unanswered?.form === form ? this.unanswered.key : crypto.randomUUID();
+    this.unanswered = { key, form };
+
     this.busy.set(true);
     this.error.set(null);
     this.lastPayment.set(null);
     this.api
-      .transfer({
-        sourceAccountId: this.sourceAccountId,
-        targetAccountNumber: this.targetAccountNumber.trim(),
-        amount: this.amount,
-        description: this.description,
-      })
+      .transfer(request, key)
       .subscribe({
         next: (payment) => {
+          this.unanswered = null;
           this.busy.set(false);
           this.lastPayment.set(payment);
           this.amount = null;
@@ -72,11 +87,19 @@ export class PaymentsPage implements OnInit {
         },
         error: (e: ApiError) => {
           // 422/503: the transfer did not happen, but it was recorded; reload the history.
+          // 0 (no connection) / 504 (gateway gave up): we don't know. Keep the key for a safe retry.
+          if (e.status !== 0 && e.status !== 504) {
+            this.unanswered = null;
+          }
           this.busy.set(false);
           this.error.set(e);
           this.load();
         },
       });
+  }
+
+  protected inProgress(p: Payment): boolean {
+    return p.status === 'PENDING' || p.status === 'DEBITED' || p.status === 'COMPENSATING';
   }
 
   private load(): void {

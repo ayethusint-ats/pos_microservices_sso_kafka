@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 import static com.banking.accountservice.support.TestUsers.ADA_ID;
+import static com.banking.accountservice.support.TestUsers.ALICE_ID;
 import static com.banking.accountservice.support.TestUsers.BOB_ID;
 import static com.banking.accountservice.support.TestUsers.ada;
 import static com.banking.accountservice.support.TestUsers.alice;
@@ -54,18 +55,26 @@ class InternalAccountIntegrationTest {
 
     private MockMvc mockMvc;
     private AccountResponse bobsAccount;
+    private AccountResponse alicesAccount;
 
     @BeforeEach
     void setUp() {
         accountRepository.deleteAll();
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         bobsAccount = accountService.open(BOB_ID, AccountType.CHECKING, "THB", ADA_ID);
+        alicesAccount = accountService.open(ALICE_ID, AccountType.CHECKING, "THB", ADA_ID);
+        accountService.deposit(alicesAccount.id(), ALICE_ID, new BigDecimal("100000.00"));
     }
 
+    /** Phase 13: a credit is only possible for a payment whose debit is recorded, so debit Alice first. */
     private ResultActions credit(RequestPostProcessor caller, UUID accountId, String amount) throws Exception {
+        UUID paymentId = UUID.randomUUID();
+        if (new BigDecimal(amount).signum() > 0) {
+            accountService.withdraw(alicesAccount.id(), ALICE_ID, new BigDecimal(amount), paymentId);
+        }
         return mockMvc.perform(post("/internal/accounts/{id}/credit", accountId).with(caller)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"amount\":%s,\"paymentId\":\"%s\"}".formatted(amount, UUID.randomUUID())));
+                .content("{\"amount\":%s,\"paymentId\":\"%s\"}".formatted(amount, paymentId)));
     }
 
     @Test

@@ -51,6 +51,12 @@ banking:
   kafka:
     topics:
       account-transactions: banking.account-transactions
+  # Phase 13: Transactional Outbox relay (OutboxRelay).
+  outbox:
+    poll-interval-ms: 500     # how often unpublished rows are sent: the extra latency of an event
+    batch-size: 100
+    send-timeout: 5s          # wait this long for Kafka's ack before leaving the row for the next run
+    retention: 7d             # published rows are deleted after this
   security:
     jwt:
       issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/banking}

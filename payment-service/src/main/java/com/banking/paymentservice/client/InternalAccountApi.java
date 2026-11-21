@@ -16,6 +16,7 @@ import java.util.UUID;
  * <pre>
  *   AccountApi          (Alice's token)     read own source account, withdraw   → proves Alice consents
  *   InternalAccountApi  (service's token)   find recipient by number, credit    → works for ANY recipient
+ *                                           resolve a debit (Phase 13)          → no customer token needed
  * </pre>
  */
 @HttpExchange("/internal/accounts")
@@ -27,4 +28,8 @@ public interface InternalAccountApi {
 
     @PostExchange("/{id}/credit")
     AccountView credit(@PathVariable UUID id, @RequestBody CreditCommand command);
+
+    /** "Was this payment debited?" If not, account-service voids it so it never can be. Idempotent. */
+    @PostExchange("/debits/{paymentId}/resolve")
+    DebitResolution resolveDebit(@PathVariable UUID paymentId);
 }

@@ -1,0 +1,61 @@
+### Phase 13: Saga, idempotency, transactional outbox.
+### Tokens:  ./infrastructure/keycloak/pkce-login.sh <alice|sam> 2>/dev/null
+### Kafka down (nothing lost):  docker stop banking-kafka   ...   docker start banking-kafka
+### Make a debit hang (lock Alice's account row for 12 s):
+###   docker exec banking-postgres psql -U <admin> -d account_db \
+###     -c "BEGIN; SELECT id FROM accounts WHERE id = '<alice-account>' FOR UPDATE; SELECT pg_sleep(12); ROLLBACK;" &
+
+@gw = http://localhost:8080
+@alice = paste-alice-token
+@sam = paste-sam-token
+@aliceAccount = paste-an-alice-account-id
+@bobsNumber = paste-a-bob-account-number
+@key = 6f1c2b8e-4a1d-4c7e-9a55-0d2f3e4b5a61
+
+### 1. A transfer with an Idempotency-Key → 201 COMPLETED
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+Idempotency-Key: {{key}}
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 10.00, "description": "rent" }
+
+### 2. Exactly the same again (a retry) → 201, SAME payment id, header Idempotent-Replayed: true, no money moved
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+Idempotency-Key: {{key}}
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 10.00, "description": "rent" }
+
+### 3. Same key, different amount → 422 IDEMPOTENCY_KEY_REUSED (nothing executed)
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+Idempotency-Key: {{key}}
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 99.00, "description": "rent" }
+
+### 4. Malformed key → 400
+POST {{gw}}/api/payments
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+Idempotency-Key: short
+
+{ "sourceAccountId": "{{aliceAccount}}", "targetAccountNumber": "{{bobsNumber}}", "amount": 1.00 }
+
+### 5. Poll a payment that answered 202 (PENDING / DEBITED / COMPENSATING): the recovery job finishes it
+GET {{gw}}/api/payments/paste-a-payment-id
+Authorization: Bearer {{alice}}
+
+### 6. Back office: payments still in progress, and the ones automation handed over to people
+GET {{gw}}/api/admin/payments?status=DEBITED
+Authorization: Bearer {{sam}}
+
+###
+GET {{gw}}/api/admin/payments?status=NEEDS_RECONCILIATION
+Authorization: Bearer {{sam}}
+
+### 7. Statement: events made while Kafka was down appear once it's back (outbox relay)
+GET {{gw}}/api/transactions?accountId={{aliceAccount}}
+Authorization: Bearer {{alice}}

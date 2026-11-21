@@ -6,7 +6,9 @@ import com.banking.paymentservice.client.AccountServiceResilience;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import com.banking.paymentservice.entity.Payment;
 import com.banking.paymentservice.entity.PaymentStatus;
+import com.banking.paymentservice.outbox.OutboxRepository;
 import com.banking.paymentservice.repository.PaymentRepository;
+import com.banking.paymentservice.service.PaymentRecoveryJob;
 import com.banking.paymentservice.support.StubAccountService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,9 +35,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static com.banking.paymentservice.support.StubAccountService.SERVICE_TOKEN;
 import static com.banking.paymentservice.support.TestUsers.ALICE_ID;
@@ -76,6 +84,9 @@ class PaymentIntegrationTest {
         registry.add("banking.clients.account-service.read-timeout", () -> "300ms");
         registry.add("spring.security.oauth2.client.provider.keycloak.token-uri", accountService::tokenUri);
         registry.add("spring.security.oauth2.client.registration.account-service.client-secret", () -> "test-secret");
+        // Phase 13: the recovery job runs only when a test calls it (with a clock of its choosing).
+        registry.add("banking.payments.recovery.initial-delay-ms", () -> "3600000");
+        registry.add("banking.payments.recovery.max-attempts", () -> "3");
     }
 
     @AfterAll
@@ -97,6 +108,12 @@ class PaymentIntegrationTest {
 
     @Autowired
     private CircuitBreakerRegistry circuitBreakers;
+
+    @Autowired
+    private PaymentRecoveryJob recoveryJob;
+
+    @Autowired
+    private OutboxRepository outbox;
 
     /**
      * Where the TEST broker is. Not @Value("${spring.kafka.bootstrap-servers}"): @ServiceConnection
@@ -131,6 +148,27 @@ class PaymentIntegrationTest {
                 .content("""
                         {"sourceAccountId":"%s","targetAccountNumber":"%s","amount":%s,"description":"test"}"""
                         .formatted(from, toNumber, amount)));
+    }
+
+    private ResultActions transfer(String idempotencyKey, UUID from, String toNumber, String amount) throws Exception {
+        return mockMvc.perform(post("/api/payments").with(alice()).header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"sourceAccountId":"%s","targetAccountNumber":"%s","amount":%s,"description":"test"}"""
+                        .formatted(from, toNumber, amount)));
+    }
+
+    /** Runs the recovery job as if {@code hoursLater} hours had passed (no waiting for real backoffs). */
+    private int recoverHoursLater(int hoursLater) {
+        return recoveryJob.recoverDue(Instant.now().plus(Duration.ofHours(hoursLater)));
+    }
+
+    private List<com.banking.paymentservice.outbox.OutboxEvent> eventsFor(UUID paymentId) {
+        return outbox.findAll().stream().filter(e -> e.getMessageKey().equals(paymentId.toString())).toList();
+    }
+
+    private long calls(String call) {
+        return accountService.calls().stream().filter(call::equals).count();
     }
 
     private Payment onlyPayment() {
@@ -294,19 +332,203 @@ class PaymentIntegrationTest {
                 "POST /internal/accounts/" + SAVINGS + "/credit");   // refund (body: "refund":true)
     }
 
+    // ------------------------------------------------------------------ Phase 13: debit outcome unknown → fence
+
     @Test
-    void debitWithoutAnswerIsAcceptedForReconciliationNotReportedAsFailed() throws Exception {
+    void debitWithoutAnswerIsResolvedAndCompletesWhenItHadHappened() throws Exception {
         accountService.slowReply("POST", "/api/accounts/" + SAVINGS + "/withdraw", Duration.ofSeconds(2));
+        accountService.debitResolution("APPLIED", SAVINGS, "10.00");
+
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+
+        // Idempotent, so the timed-out debit was retried once; then resolved (service token), then credited.
+        assertThat(calls("POST /api/accounts/" + SAVINGS + "/withdraw")).isEqualTo(2);
+        assertThat(accountService.accountRequests()).filteredOn(r -> r.path().endsWith("/resolve"))
+                .singleElement().satisfies(r -> assertThat(r.authorization()).isEqualTo("Bearer " + SERVICE_TOKEN));
+        assertThat(calls("POST /internal/accounts/" + BOBS_ACCOUNT + "/credit")).isEqualTo(1);
+    }
+
+    @Test
+    void debitWithoutAnswerThatHadNotHappenedIsVoidedAndFailsRetryably() throws Exception {
+        accountService.slowReply("POST", "/api/accounts/" + SAVINGS + "/withdraw", Duration.ofSeconds(2));
+        accountService.debitResolution("VOIDED", null, null);
+
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.paymentStatus").value("FAILED"))
+                .andExpect(jsonPath("$.code").value("DEBIT_NOT_APPLIED"));
+        assertThat(calls("POST /internal/accounts/" + BOBS_ACCOUNT + "/credit")).isZero();
+    }
+
+    @Test
+    void unresolvableDebitIsAcceptedThenFinishedByRecoveryWithoutTheCustomersToken() throws Exception {
+        accountService.slowReply("POST", "/api/accounts/" + SAVINGS + "/withdraw", Duration.ofSeconds(2));
+        accountService.problem("POST", StubAccountService.RESOLVE_PATH, 503, null, "unavailable");
 
         transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00")
                 .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.status").value("NEEDS_RECONCILIATION"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.failureCode").value("DEBIT_OUTCOME_UNKNOWN"));
+        assertThat(recoveryJob.recoverDue(Instant.now())).isZero();      // grace period: the request owns it
 
-        // It shows up in the back-office work queue.
+        accountService.debitResolution("APPLIED", SAVINGS, "10.00");     // account-service is back...
+        // ...but the request's 4 timeouts opened the breaker (realistic): the job would just be refused
+        // until it half-opens. Skip the 10 s wait.
+        circuitBreakers.circuitBreaker(AccountServiceResilience.INSTANCE).reset();
+        long withdrawalsBefore = calls("POST /api/accounts/" + SAVINGS + "/withdraw");
+        assertThat(recoverHoursLater(1)).isEqualTo(1);
+
+        Payment payment = onlyPayment();
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(payment.getRecoveryAttempts()).isEqualTo(1);
+        assertThat(payment.getNextRecoveryAt()).isNull();
+        assertThat(calls("POST /api/accounts/" + SAVINGS + "/withdraw")).isEqualTo(withdrawalsBefore);   // never re-sent
+        // Customers see it finished too.
+        mockMvc.perform(get("/api/payments/{id}", payment.getId()).with(alice()))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    // ------------------------------------------------------------------ Phase 13: after the debit
+
+    @Test
+    void creditWithoutAnswerIsRetriedByRecoveryUntilItCompletes() throws Exception {
+        accountService.problem("POST", "/internal/accounts/" + BOBS_ACCOUNT + "/credit", 503, null, "unavailable");
+
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("DEBITED"))
+                .andExpect(jsonPath("$.failureCode").value("CREDIT_OUTCOME_UNKNOWN"));
+        UUID paymentId = onlyPayment().getId();
+        assertThat(eventsFor(paymentId)).isEmpty();                      // unfinished: nothing announced yet
+
+        accountService.recipient(BOBS_ACCOUNT, BOBS_NUMBER, "THB", "ACTIVE");   // credit works again
+        recoverHoursLater(1);
+
+        Payment payment = onlyPayment();
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(calls("POST /internal/accounts/" + SAVINGS + "/credit")).isZero();   // no refund
+        // Exactly one event, written in the same transaction as COMPLETED.
+        assertThat(eventsFor(paymentId)).singleElement()
+                .satisfies(e -> assertThat(e.getPayload()).contains("PAYMENT_COMPLETED").contains(payment.getId().toString()));
+    }
+
+    @Test
+    void refundWithoutAnswerIsFinishedByRecovery() throws Exception {
+        accountService.problem("POST", "/internal/accounts/" + BOBS_ACCOUNT + "/credit", 422, "ACCOUNT_NOT_ACTIVE", "Account is FROZEN");
+        accountService.problem("POST", "/internal/accounts/" + SAVINGS + "/credit", 503, null, "unavailable");
+
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("COMPENSATING"))
+                .andExpect(jsonPath("$.failureCode").value("ACCOUNT_NOT_ACTIVE"));
+
+        accountService.account(SAVINGS, "THB", "ACTIVE", ALICE_TOKEN);   // refunds work again
+        recoverHoursLater(1);
+
+        assertThat(onlyPayment().getStatus()).isEqualTo(PaymentStatus.REVERSED);
+    }
+
+    @Test
+    void recoveryGivesUpAfterMaxAttemptsAndHandsOverToAPerson() throws Exception {
+        accountService.problem("POST", "/internal/accounts/" + BOBS_ACCOUNT + "/credit", 503, null, "unavailable");
+        transfer(alice(), SAVINGS, BOBS_NUMBER, "10.00").andExpect(status().isAccepted());
+
+        for (int hour = 1; hour <= 3; hour++) {                          // max-attempts = 3 in this test
+            recoverHoursLater(hour);
+        }
+
+        Payment payment = onlyPayment();
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.NEEDS_RECONCILIATION);
+        assertThat(payment.getFailureCode()).isEqualTo("RECOVERY_EXHAUSTED");
+        assertThat(payment.getRecoveryAttempts()).isEqualTo(3);
+        assertThat(recoverHoursLater(10)).isZero();                       // final: the job leaves it alone
         mockMvc.perform(get("/api/admin/payments").param("status", "NEEDS_RECONCILIATION").with(sam()))
-                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    // ------------------------------------------------------------------ Phase 13: Idempotency-Key
+
+    @Test
+    void retryWithTheSameIdempotencyKeyReturnsTheFirstOutcomeAndMovesNoMoney() throws Exception {
+        String first = transfer("key-0001-aaaa", SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isCreated())
+                .andExpect(header().doesNotExist("Idempotent-Replayed"))
+                .andReturn().getResponse().getContentAsString();
+        int callsAfterFirst = accountService.calls().size();
+
+        String again = transfer("key-0001-aaaa", SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(objectMapper.readTree(again).path("id")).isEqualTo(objectMapper.readTree(first).path("id"));
+        assertThat(accountService.calls()).hasSize(callsAfterFirst);     // account-service not called at all
+        assertThat(repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void aReplayedFailureFailsTheSameWay() throws Exception {
+        accountService.problem("POST", "/api/accounts/" + SAVINGS + "/withdraw", 422, "INSUFFICIENT_FUNDS", "no money");
+        transfer("key-0002-bbbb", SAVINGS, BOBS_NUMBER, "10.00").andExpect(status().isUnprocessableEntity());
+
+        transfer("key-0002-bbbb", SAVINGS, BOBS_NUMBER, "10.00")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"));
+        assertThat(calls("POST /api/accounts/" + SAVINGS + "/withdraw")).isEqualTo(1);
+    }
+
+    @Test
+    void theSameKeyForADifferentRequestIsRefused() throws Exception {
+        transfer("key-0003-cccc", SAVINGS, BOBS_NUMBER, "10.00").andExpect(status().isCreated());
+
+        transfer("key-0003-cccc", SAVINGS, BOBS_NUMBER, "99.00")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void keysBelongToOneCustomer() throws Exception {
+        transfer("key-0004-dddd", SAVINGS, BOBS_NUMBER, "10.00").andExpect(status().isCreated());
+
+        // Bob happens to use the same key: it's HIS key, it doesn't replay Alice's payment.
+        mockMvc.perform(post("/api/payments").with(bob()).header("Idempotency-Key", "key-0004-dddd")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceAccountId":"%s","targetAccountNumber":"%s","amount":10.00,"description":"test"}"""
+                                .formatted(SAVINGS, BOBS_NUMBER)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(header().doesNotExist("Idempotent-Replayed"))
+                .andExpect(jsonPath("$.code").value("SOURCE_ACCOUNT_NOT_FOUND"));
+        assertThat(repository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void aDoubleClickCreatesOnePaymentAndDebitsOnce() throws Exception {
+        List<Callable<Integer>> fiveClicks = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            fiveClicks.add(() -> transfer("key-0005-eeee", SAVINGS, BOBS_NUMBER, "10.00").andReturn().getResponse().getStatus());
+        }
+        List<Integer> statuses = new ArrayList<>();
+        try (ExecutorService pool = Executors.newFixedThreadPool(5)) {
+            for (Future<Integer> f : pool.invokeAll(fiveClicks)) {
+                statuses.add(f.get());
+            }
+        }
+
+        assertThat(repository.count()).isEqualTo(1);
+        assertThat(calls("POST /api/accounts/" + SAVINGS + "/withdraw")).isEqualTo(1);
+        // The first finished (201); the others replayed it: 201, or 202 if it was still in progress.
+        assertThat(statuses).allMatch(s -> s == 201 || s == 202).contains(201);
+    }
+
+    @Test
+    void malformedIdempotencyKeyIs400() throws Exception {
+        transfer("short", SAVINGS, BOBS_NUMBER, "10.00").andExpect(status().isBadRequest());
+        assertThat(repository.count()).isZero();
     }
 
     // ------------------------------------------------------------------ resilience (Phase 12)

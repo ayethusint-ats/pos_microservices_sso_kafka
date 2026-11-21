@@ -107,6 +107,12 @@
             <artifactId>kafka</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Phase 13: wait for asynchronous effects (outbox relay, recovery job) without sleeps -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

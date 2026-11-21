@@ -17,8 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 /**
- * Back office: every payment, and above all the work queue
- * {@code ?status=NEEDS_RECONCILIATION} (and {@code DEBITED} ones that are stuck).
+ * Back office: every payment, and above all the work queue {@code ?status=NEEDS_RECONCILIATION}:
+ * payments the recovery job (Phase 13) handed over to people. {@code PENDING}, {@code DEBITED} and
+ * {@code COMPENSATING} are in progress and normally finish by themselves.
  * Read-only for both SUPPORT and ADMIN: nobody "fixes" a payment by editing a row.
  */
 @RestController

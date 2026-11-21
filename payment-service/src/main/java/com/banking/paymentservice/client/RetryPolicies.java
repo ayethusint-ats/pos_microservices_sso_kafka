@@ -20,12 +20,14 @@ public class RetryPolicies {
                     && !(unavailable.getCause() instanceof CallNotPermittedException);
 
     /**
-     * Writes move money: retry ONLY if the request certainly didn't execute (connection refused,
-     * refused with a 4xx such as an expired token). After a timeout or 5xx the money may already
-     * have moved, so a retry could debit twice. Phase 13's idempotency keys remove that limit.
+     * Writes move money. Phase 12 retried them ONLY when the request certainly didn't execute,
+     * because after a timeout the money might already have moved.
+     *
+     * <p>Phase 13: account-service executes each payment operation at most once (the payment ID
+     * is the idempotency key), so a repeat after a timeout is answered with the original result.
+     * Writes are now as safe to retry as reads. Remove the idempotency and this line becomes a bug.
      */
-    static final Predicate<Throwable> WRITE_RETRYABLE = ex ->
-            READ_RETRYABLE.test(ex) && !((AccountServiceUnavailableException) ex).isOutcomeUnknown();
+    static final Predicate<Throwable> WRITE_RETRYABLE = READ_RETRYABLE;
 
     @Bean
     RetryConfigCustomizer readRetryPolicy() {

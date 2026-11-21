@@ -70,7 +70,7 @@ class AccountServiceResilienceTest {
         return stub.calls().stream().filter((method + " " + path)::equals).count();
     }
 
-    // ------------------------------------------------------------------ retry: only what is safe
+    // ------------------------------------------------------------------ retry: only what is safe (idempotent)
 
     @Test
     void readIsRetriedOnceAndSucceeds() {
@@ -81,13 +81,27 @@ class AccountServiceResilienceTest {
     }
 
     @Test
-    void moneyMovingCallIsNotRetriedWhenTheOutcomeIsUnknown() {
-        stub.failNext("POST", WITHDRAW, 1, 500);   // the 2nd attempt WOULD succeed: and that's the danger
+    void moneyMovingCallIsRetriedAfterAnUnknownOutcomeBecauseItIsIdempotent() {
+        stub.failNext("POST", WITHDRAW, 1, 500);   // Phase 12 stopped here: a retry might have debited twice
+        UUID paymentId = UUID.randomUUID();
 
+        client.debit(ACCOUNT, BigDecimal.TEN, paymentId);
+
+        assertThat(calls("POST", WITHDRAW)).isEqualTo(2);
+        // Both attempts carry the SAME payment ID: account-service executes it at most once.
+        assertThat(stub.accountRequests()).filteredOn(r -> r.path().equals(WITHDRAW))
+                .allMatch(r -> r.body().contains(paymentId.toString()));
+    }
+
+    @Test
+    void debitIsUnknownIfAnEarlierAttemptMayStillExecuteEvenWhenTheLastOneWasRefused() {
+        stub.problem("POST", WITHDRAW, 422, "INSUFFICIENT_FUNDS", "no money");
+        stub.failNext("POST", WITHDRAW, 1, 500);   // 1st attempt: unknown. 2nd: a clean "no".
+
+        // The 1st attempt may still land later, so "rejected" would be a lie. The saga fences it.
         assertThatThrownBy(() -> client.debit(ACCOUNT, BigDecimal.TEN, UUID.randomUUID()))
                 .isInstanceOfSatisfying(AccountServiceUnavailableException.class,
                         ex -> assertThat(ex.isOutcomeUnknown()).isTrue());
-        assertThat(calls("POST", WITHDRAW)).isEqualTo(1);      // a retry might have debited twice
     }
 
     @Test
@@ -164,12 +178,12 @@ class AccountServiceResilienceTest {
     }
 
     @Test
-    void refundTriesHarderThanOtherWrites() {
-        stub.failNext("POST", CREDIT, 3, 409);   // refused 3× (e.g. concurrent update), then OK
+    void refundIsRetriedAfterAnUnknownOutcome() {
+        stub.failNext("POST", CREDIT, 1, 500);   // unknown; the refund is idempotent, so try again
 
         client.refund(ACCOUNT, BigDecimal.ONE, UUID.randomUUID());
 
-        assertThat(calls("POST", CREDIT)).isEqualTo(4);
+        assertThat(calls("POST", CREDIT)).isEqualTo(2);
     }
 
     // ------------------------------------------------------------------ bulkhead
@@ -242,7 +256,7 @@ class AccountServiceResilienceTest {
                 .retryOnException(RetryPolicies.READ_RETRYABLE).build());
         Retry write = Retry.of("write", RetryConfig.custom().maxAttempts(2).waitDuration(Duration.ofMillis(10))
                 .retryOnException(RetryPolicies.WRITE_RETRYABLE).build());
-        Retry compensation = Retry.of("compensation", RetryConfig.custom().maxAttempts(4).waitDuration(Duration.ofMillis(10))
+        Retry compensation = Retry.of("compensation", RetryConfig.custom().maxAttempts(2).waitDuration(Duration.ofMillis(10))
                 .retryOnException(RetryPolicies.WRITE_RETRYABLE).build());
         return new AccountServiceResilience(breaker, bulkhead, rateLimiter, read, write, compensation);
     }

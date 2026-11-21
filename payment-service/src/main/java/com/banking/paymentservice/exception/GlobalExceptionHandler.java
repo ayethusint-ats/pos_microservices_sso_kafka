@@ -1,5 +1,6 @@
 package com.banking.paymentservice.exception;
 
+import com.banking.paymentservice.controller.PaymentController;
 import com.banking.paymentservice.dto.PaymentResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +32,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
      * The transfer didn't happen. The body still identifies the recorded payment:
      * <ul>
      *   <li>422: refused for a business reason (insufficient funds, wrong account, ...). Don't retry as is.</li>
-     *   <li>503 + Retry-After: account-service was unavailable and nothing moved. Retrying later may work.</li>
+     *   <li>503 + Retry-After: account-service was unavailable and nothing moved. Retrying later may work
+     *       (with a NEW Idempotency-Key: the old one stands for this failed attempt).</li>
      * </ul>
      */
     @ExceptionHandler(PaymentNotCompletedException.class)
@@ -49,7 +51,25 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         if (ex.isRetryable()) {
             response.header(HttpHeaders.RETRY_AFTER, "5");
         }
+        if (ex.isReplayed()) {
+            response.header(PaymentController.IDEMPOTENT_REPLAYED, "true");
+        }
         return response.body(problem);
+    }
+
+    @ExceptionHandler(InvalidIdempotencyKeyException.class)
+    public ProblemDetail handleInvalidKey(InvalidIdempotencyKeyException ex) {
+        ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "Validation failed", "Invalid Idempotency-Key header");
+        problem.setProperty("errors", Map.of(PaymentController.IDEMPOTENCY_KEY, ex.getMessage()));
+        return problem;
+    }
+
+    /** Phase 13: same Idempotency-Key, different request. Nothing was executed. */
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    public ProblemDetail handleKeyReused(IdempotencyKeyReusedException ex) {
+        ProblemDetail problem = problem(HttpStatus.UNPROCESSABLE_ENTITY, "Idempotency-Key reused", ex.getMessage());
+        problem.setProperty("code", IdempotencyKeyReusedException.CODE);
+        return problem;
     }
 
     @ExceptionHandler(ResourceNotFoundException.class)

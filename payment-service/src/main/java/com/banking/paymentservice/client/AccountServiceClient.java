@@ -17,6 +17,7 @@ import java.net.NoRouteToHostException;
 import java.net.UnknownHostException;
 import java.net.http.HttpConnectTimeoutException;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import static com.banking.paymentservice.client.AccountServiceResilience.CallType.COMPENSATION;
@@ -70,9 +71,36 @@ public class AccountServiceClient {
         return call("GET own account", READ, () -> customerApi.getAccount(accountId));
     }
 
-    /** Take money out of the caller's own account. Only possible with the customer's token: their consent. */
+    /**
+     * Take money out of the caller's own account. Only possible with the customer's token: their consent.
+     *
+     * <p>Idempotent since Phase 13 (the payment ID is the key), so a timed-out attempt is retried.
+     * One subtlety: if an earlier attempt timed out and the LAST attempt failed cleanly (e.g. 422),
+     * the earlier one may still execute later (it can sit in a queue, as Phase 12 showed live).
+     * So the overall outcome is reported as UNKNOWN, and the saga resolves it with the fence.
+     */
     public AccountView debit(UUID accountId, BigDecimal amount, UUID paymentId) {
-        return call("withdraw", WRITE, () -> customerApi.withdraw(accountId, new MoneyCommand(amount, paymentId)));
+        AtomicBoolean anAttemptMayHaveExecuted = new AtomicBoolean();
+        try {
+            return resilience.execute("withdraw", WRITE, () -> {
+                try {
+                    return translated("withdraw", () -> customerApi.withdraw(accountId, new MoneyCommand(amount, paymentId)));
+                } catch (AccountServiceUnavailableException ex) {
+                    if (ex.isOutcomeUnknown()) {
+                        anAttemptMayHaveExecuted.set(true);
+                    }
+                    throw ex;
+                }
+            });
+        } catch (AccountRejectedException | AccountServiceUnavailableException ex) {
+            boolean lastAttemptUnknown = ex instanceof AccountServiceUnavailableException unavailable && unavailable.isOutcomeUnknown();
+            if (anAttemptMayHaveExecuted.get() && !lastAttemptUnknown) {
+                throw new AccountServiceUnavailableException(
+                        "account-service withdraw: an earlier attempt's outcome is unknown (last attempt: %s)".formatted(ex.getMessage()),
+                        true, ex);
+            }
+            throw ex;
+        }
     }
 
     // ---- with payment-service's OWN token (Client Credentials) ---------------------------------
@@ -90,6 +118,14 @@ public class AccountServiceClient {
     /** Give the money back to the source account of a reversed transfer (event kind REFUND). */
     public AccountView refund(UUID accountId, BigDecimal amount, UUID paymentId) {
         return call("refund", COMPENSATION, () -> internalApi.credit(accountId, new CreditCommand(amount, paymentId, true)));
+    }
+
+    /**
+     * Phase 13: "was this payment debited?" With the service token, so the recovery job can ask
+     * without a customer. If not debited, account-service makes sure it never will be.
+     */
+    public DebitResolution resolveDebit(UUID paymentId) {
+        return call("resolve debit", WRITE, () -> internalApi.resolveDebit(paymentId));
     }
 
     /** Phase 12: the translated call runs inside retry / circuit breaker / rate limiter / bulkhead. */

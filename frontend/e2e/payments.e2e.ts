@@ -47,14 +47,20 @@ test('a customer transfers between own accounts; account-service refuses an over
   await expect(fromRow.getByTestId('balance')).toContainText('200.00');
 
   // Transfer 75 through payment-service (which calls account-service twice to move the money).
+  // Phase 13: every transfer carries an Idempotency-Key, a new one per transfer.
   await page.goto('/payments');
+  const firstPost = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/api/payments'));
   await send(page, from, to, '75');
+  const firstKey = (await firstPost).headers()['idempotency-key'];
+  expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
   await expect(page.getByTestId('transfer-done')).toBeVisible();
   await expect(page.locator('[data-testid="payments-table"] tbody tr').first().getByTestId('payment-status'))
     .toHaveText('COMPLETED');
 
   // More than the balance: account-service says 422 INSUFFICIENT_FUNDS, payment-service passes it on.
+  const secondPost = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/api/payments'));
   await send(page, from, to, '1000');
+  expect((await secondPost).headers()['idempotency-key']).not.toBe(firstKey);
   await expect(page.getByTestId('error-code')).toHaveText('INSUFFICIENT_FUNDS');
   await expect(page.locator('[data-testid="payments-table"] tbody tr').first().getByTestId('payment-status'))
     .toHaveText('REJECTED');

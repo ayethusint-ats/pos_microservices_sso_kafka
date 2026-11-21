@@ -39,12 +39,13 @@ public class AccountServiceResilience {
     public enum CallType {
         /** GET: repeating it changes nothing. Retried on any "unavailable". */
         READ,
-        /** Moves money: retried only if the request CERTAINLY didn't execute (connection refused, 4xx refusal). */
+        /** Moves money. Idempotent since Phase 13 (payment ID), so retried like a read. */
         WRITE,
         /**
-         * The refund of a reversed transfer: like WRITE, but with more attempts and NOT blocked by an
-         * open breaker. If the breaker was opened by other customers' failures, giving up here would
-         * strand this customer's money, and a refund is rare enough not to overload anyone.
+         * The refund of a reversed transfer: like WRITE, but NOT blocked by an open breaker. If the
+         * breaker was opened by other customers' failures, giving up here would strand this
+         * customer's money, and a refund is rare enough not to overload anyone. If it still fails,
+         * the recovery job (Phase 13) keeps trying.
          */
         COMPENSATION
     }

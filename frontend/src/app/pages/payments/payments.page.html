@@ -7,10 +7,16 @@
     <div class="card" role="status" data-testid="transfer-done">
       Transferred {{ p.amount | currency: p.currency ?? undefined }}.
     </div>
-  } @else {
+  } @else if (inProgress(p)) {
+    <!-- Phase 13: the recovery job finishes it automatically. -->
     <div class="card" role="status" data-testid="transfer-pending">
-      Your transfer was received, but its result is not confirmed yet ({{ p.failureCode }}).
-      The bank will check it; please do not send it again.
+      Your transfer was accepted and is being completed ({{ p.status }}). It will finish automatically;
+      please do not send it again. Its status below updates when you reload.
+    </div>
+  } @else {
+    <div class="card" role="status" data-testid="transfer-review">
+      Your transfer was received, but its result needs to be checked by the bank ({{ p.failureCode }}).
+      Please do not send it again.
     </div>
   }
 }
