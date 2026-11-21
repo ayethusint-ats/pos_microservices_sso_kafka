@@ -60,8 +60,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Error rendering (e.g. Spring's /error dispatch) must not be blocked.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        // Liveness/readiness probes (Docker, Kubernetes) must work without a token.
-                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Liveness/readiness probes (Docker, Kubernetes) must work without a token. Phase 16: /livez,
+                        // /readyz are the same probes on the main port (see application.yml); without them here
+                        // denyAll() below would answer 401 and Kubernetes would restart a healthy pod forever.
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/livez", "/readyz").permitAll()
                         // Phase 14: Prometheus scrapes without a token. Metrics hold no customer data; the gateway never
                         // routes /actuator, and in Kubernetes only the monitoring namespace may reach it (Phase 16).
                         .requestMatchers("/actuator/prometheus").permitAll()

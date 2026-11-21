@@ -1,0 +1,32 @@
+# Laptop compromise (8 GB for the whole cluster): one replica of the read-side services. Their PDBs go
+# too: with one replica, minAvailable 1 would make every node drain hang. account-service, payment-service,
+# api-gateway and frontend keep 2+ replicas: a transfer never depends on a single pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: user-service, namespace: banking }
+spec: { replicas: 1 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: transaction-service, namespace: banking }
+spec: { replicas: 1 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: notification-service, namespace: banking }
+spec: { replicas: 1 }
+---
+$patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: user-service, namespace: banking }
+---
+$patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: transaction-service, namespace: banking }
+---
+$patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: notification-service, namespace: banking }

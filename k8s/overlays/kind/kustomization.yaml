@@ -1,0 +1,30 @@
+# Phase 16: the local kind cluster = base + what's specific to this environment:
+#   - images: the locally built tag (loaded into the nodes by up.sh; nothing is pulled)
+#   - traffic in: NodePorts that kind maps to localhost (k8s/kind/cluster.yaml)
+#   - placement: Postgres and Kafka on the "data" node, where their volumes live
+#   - laptop memory: 1 replica (and so no PDB) for the three services that aren't on the money path.
+#     Measured cost (documentation/16): a node drain gives ~5 s of 502s on their routes.
+# A "prod" overlay would instead pin image DIGESTS from a registry, add a Gateway API route / load
+# balancer with TLS, raise replicas, and point at managed Postgres/Kafka.
+#
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone k8s/overlays/kind | kubectl apply -f -
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - { name: banking/user-service, newTag: local }
+  - { name: banking/account-service, newTag: local }
+  - { name: banking/payment-service, newTag: local }
+  - { name: banking/transaction-service, newTag: local }
+  - { name: banking/notification-service, newTag: local }
+  - { name: banking/api-gateway, newTag: local }
+  - { name: banking/frontend, newTag: local }
+patches:
+  - path: nodeports.yaml
+  - path: single-replica.yaml
+  - target: { kind: StatefulSet, namespace: banking-infra }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { banking.dev/pool: data }

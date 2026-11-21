@@ -1,0 +1,109 @@
+# Phase 16: api-gateway: the ONLY application entry point from outside (a NodePort in the kind overlay;
+# a cloud load balancer / Gateway API in production). 2+ replicas, autoscaled.
+# Note: the rate limiter is in memory (Phase 8): with N replicas a user effectively gets N × the limit.
+# Production: a shared limiter (Redis) or limits at the edge.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: banking
+  labels: { app.kubernetes.io/name: api-gateway }
+spec:
+  # A stable virtual IP + DNS name (api-gateway.banking.svc.cluster.local, or just "api-gateway" inside the
+  # namespace) in front of whichever pods are READY right now. Only the API port: 9000 is not published.
+  selector: { app.kubernetes.io/name: api-gateway }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: banking
+  labels: { app.kubernetes.io/name: api-gateway, app.kubernetes.io/component: edge }
+spec:
+  # No "replicas": the HorizontalPodAutoscaler owns that number (autoscaling.yaml). With it here,
+  # every kubectl apply would reset the replica count the HPA chose.
+  revisionHistoryLimit: 5          # old ReplicaSets kept for "kubectl rollout undo"
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                  # start one new pod first...
+      maxUnavailable: 0            # ...and remove an old one only when the new one is READY
+  selector:
+    matchLabels: { app.kubernetes.io/name: api-gateway }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: api-gateway, app.kubernetes.io/component: edge }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+    spec:
+      automountServiceAccountToken: false   # the app never calls the Kubernetes API: no token to steal
+      enableServiceLinks: false             # discovery is DNS; skip the legacy *_SERVICE_HOST variables
+      # SIGTERM → preStop (5 s) → Spring's graceful shutdown (≤ 20 s) → SIGKILL at 45 s at the latest.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                    # the image's "spring" user (Dockerfile)
+        runAsGroup: 10001
+        fsGroup: 10001                      # volumes (incl. the Secret files below) get group 10001
+        seccompProfile: { type: RuntimeDefault }
+      # Replicas on different nodes when possible: one node failing must not take all of them.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: api-gateway }
+      containers:
+        - name: api-gateway
+          image: banking/api-gateway             # tag set by the overlay (kustomize "images")
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }     # Actuator: metrics (Prometheus only)
+          envFrom:
+            - configMapRef: { name: banking-java-config }  # DB/Kafka/Keycloak/Jaeger addresses
+          env:
+            - { name: USER_SERVICE_URL, value: "http://user-service:8081" }
+            - { name: ACCOUNT_SERVICE_URL, value: "http://account-service:8082" }
+            - { name: PAYMENT_SERVICE_URL, value: "http://payment-service:8083" }
+            - { name: TRANSACTION_SERVICE_URL, value: "http://transaction-service:8084" }
+            - { name: NOTIFICATION_SERVICE_URL, value: "http://notification-service:8085" }
+          resources:
+            # Memory: request = limit. The JVM sizes its heap from the limit (75 %, Dockerfile), and a
+            # pod that may grow beyond its request is the first one killed when the node runs short.
+            # CPU: a request (scheduling, HPA) but NO limit: a CPU limit throttles the JVM's startup and
+            # GC threads; a memory limit is what protects the neighbours.
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 512Mi }
+          # startup: up to 3 min to boot (Flyway, Kafka, cold JIT); liveness/readiness wait for it.
+          startupProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          # liveness: "is the process stuck?" → restart. Never depends on the DB or another service:
+          # a database outage must not restart every pod (that makes it worse).
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          # readiness: "send me traffic?" → in/out of the Service. Goes false during shutdown.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            # Endpoint removal and SIGTERM happen IN PARALLEL. Keep serving 5 s so kube-proxy (and the
+            # gateway's connection pool) stop sending here before Spring stops accepting connections.
+            preStop:
+              sleep: { seconds: 5 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true    # an attacker can't drop a binary or modify the app
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }   # the only writable place: Tomcat/Netty temp files, JVM perf data
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }

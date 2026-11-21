@@ -1,0 +1,9 @@
+# Phase 16: everything the platform needs, environment-neutral. Overlays (overlays/kind) add what
+# differs per environment: image tags, how traffic gets in, node placement.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - infra
+  - monitoring
+  - apps

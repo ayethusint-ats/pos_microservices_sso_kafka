@@ -1,0 +1,72 @@
+# Phase 16: who may connect to the data layer. Default: nobody; then one rule per legitimate caller.
+# (Ingress only here; egress of the application pods is locked down in apps/network-policies.yaml.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: banking-infra
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# Postgres: only the four services that own a database, and Keycloak. Not the gateway, not
+# notification-service: a compromised gateway can't even open a connection to the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: banking-infra
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking }
+          podSelector:          # same list item as namespaceSelector = AND (these pods IN that namespace)
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [user-service, account-service, payment-service, transaction-service]
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: keycloak }
+      ports:
+        - { port: 5432, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka
+  namespace: banking-infra
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: kafka }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking }
+          podSelector:
+            matchLabels: { app.kubernetes.io/component: backend }   # the five services, not the gateway
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: kafka-topics }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: kafka }          # the broker connecting to itself via its Service
+      ports:
+        - { port: 9092, protocol: TCP }
+---
+# Keycloak's login page is public (browsers, through the NodePort) and every service fetches its
+# signing keys, so port 8180 is open. The management port (9000: health, metrics) is not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak
+  namespace: banking-infra
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: keycloak }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 8180, protocol: TCP }

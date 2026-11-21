@@ -21,6 +21,7 @@ A learning project: a banking system built as microservices with Spring Boot 3.5
 | 13 | Saga, idempotency (Idempotency-Key, idempotent operations) and the transactional outbox | [documentation/13-saga-idempotency.md](documentation/13-saga-idempotency.md) |
 | 14 | Monitoring, logging and tracing: Prometheus, Grafana, OpenTelemetry, Jaeger | [documentation/14-observability.md](documentation/14-observability.md) |
 | 15 | Docker: images, the whole platform in Compose, secrets as files, logs in Loki | [documentation/15-docker.md](documentation/15-docker.md) |
+| 16 | Kubernetes: Kustomize, probes, NetworkPolicies, Pod Security, HPA, PDB, zero-downtime rollouts on kind | [documentation/16-kubernetes.md](documentation/16-kubernetes.md) |
 
 ## Quick start
 
@@ -31,6 +32,14 @@ docker compose --profile app up -d --build     # the whole platform
 ```
 App: http://localhost:4200 · API: http://localhost:8080 · Grafana: http://localhost:3000 · Jaeger: http://localhost:16686
 
+Or on a local Kubernetes cluster (kind; stop the Compose stack first, same ports):
+
+```bash
+BUILD=1 k8s/scripts/up.sh                      # cluster + images + secrets from .env + deploy
+k8s/scripts/smoke-test.sh                      # verify (68 checks)
+k8s/scripts/down.sh                            # delete the cluster
+```
+
 ## Layout
 
 ```
@@ -39,6 +48,7 @@ banking-platform/
 ├── Dockerfile               # One multi-stage image definition for all six Spring Boot services (Phase 15)
 ├── docker-compose.yml       # Infrastructure + monitoring; with --profile app the whole platform (Phase 15)
 ├── .env.example             # Template for local secrets (copy to .env; never commit .env)
+├── k8s/                     # Kubernetes (Phase 16): kind cluster, Kustomize base + kind overlay, scripts
 ├── frontend/                # Angular 22 SPA :4200, OIDC login via Keycloak (Phase 7)
 ├── api-gateway/             # Single entry point :8080: routing, JWT, CORS, rate limit (Phase 6)
 ├── user-service/            # Customer profiles (Phase 2)
@@ -60,6 +70,7 @@ banking-platform/
 - JDK 21 or newer (code targets Java 21)
 - Maven 3.9+
 - Docker with Docker Compose v2
+- For Kubernetes (Phase 16): kind 0.33+ and kubectl
 - Node.js 22.22+, 24.15+ or 26+ (Angular 22)
 
 ## Run

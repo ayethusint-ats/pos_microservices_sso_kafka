@@ -105,3 +105,22 @@ server:
 spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s   # then stop anyway; below Compose's stop_grace_period (30 s)
+
+---
+# Phase 16: on Kubernetes. Spring Boot detects it (every pod gets KUBERNETES_SERVICE_HOST) and
+# activates this document by itself: no profile to remember, and nothing changes outside Kubernetes.
+spring:
+  config:
+    activate:
+      on-cloud-platform: kubernetes
+management:
+  server:
+    # Actuator (metrics, health details) moves to its own port. A NetworkPolicy filters PORTS, not
+    # URL paths: now it can let Prometheus reach 9000 and nothing else, and callers reach only the API port.
+    port: 9000
+  endpoint:
+    health:
+      probes:
+        # /livez and /readyz ALSO on the main port: Kubernetes should probe the port that serves
+        # traffic (a healthy management port says nothing about a stuck API connector).
+        add-additional-paths: true

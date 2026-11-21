@@ -55,7 +55,8 @@ public class GatewaySecurityConfig {
                 .authorizeExchange(exchanges -> exchanges
                         // CORS preflight carries no token by design.
                         .pathMatchers(HttpMethod.OPTIONS, "/api/**").permitAll()
-                        .pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Phase 16: /livez, /readyz = the Kubernetes probes on the main port (see application.yml).
+                        .pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/livez", "/readyz").permitAll()
                         // Phase 14: Prometheus scrapes without a token. Metrics hold no customer data; the gateway never
                         // routes /actuator, and in Kubernetes only the monitoring namespace may reach it (Phase 16).
                         .pathMatchers("/actuator/prometheus").permitAll()

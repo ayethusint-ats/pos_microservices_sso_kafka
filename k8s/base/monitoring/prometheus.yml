@@ -1,0 +1,41 @@
+# Phase 16: Prometheus on Kubernetes. No target list any more: it asks the Kubernetes API for the
+# pods in the "banking" namespace and scrapes every pod that opts in. A new replica (rollout, HPA) is
+# scraped within seconds; a deleted one disappears. Same job name and alert rules as Phase 14/15.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/alerts.yml
+
+scrape_configs:
+  - job_name: banking-services
+    kubernetes_sd_configs:
+      - role: pod                    # one target per container PORT of every pod
+        namespaces:
+          names: [banking]           # RBAC (prometheus.yaml) allows this namespace only
+    relabel_configs:
+      # Opt-in: pods annotated prometheus.io/scrape: "true" (the six Spring Boot services).
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        regex: "true"
+        action: keep
+      # Of each pod's ports, only the one NAMED "management" (9000): never the API port.
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        regex: management
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        regex: (.+)
+        target_label: __metrics_path__
+      # Readable labels: instance = pod name (not an IP that changes on every restart).
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

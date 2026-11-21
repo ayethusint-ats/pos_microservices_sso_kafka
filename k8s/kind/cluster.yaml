@@ -1,0 +1,26 @@
+# Phase 16: a local Kubernetes cluster in Docker (kind = "Kubernetes IN Docker"): every node is a
+# container. One control plane + two workers, so pods spread over nodes and a node can be drained.
+#
+#   kind create cluster --config k8s/kind/cluster.yaml      (k8s/scripts/up.sh does this)
+#
+# The workers share your machine's Docker memory: each node REPORTS all of it as allocatable, so the
+# scheduler can't protect you from over-committing a laptop. Stop the Compose stack first.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: banking
+nodes:
+  - role: control-plane
+    # Host port → NodePort on this node. kube-proxy forwards a NodePort to the pod on ANY node.
+    # Same URLs as Compose, so the browser, Keycloak's redirect URI and the token issuer don't change.
+    extraPortMappings:
+      - { hostPort: 8080,  containerPort: 30080, listenAddress: 127.0.0.1 }   # api-gateway
+      - { hostPort: 4200,  containerPort: 30420, listenAddress: 127.0.0.1 }   # frontend
+      - { hostPort: 8180,  containerPort: 30180, listenAddress: 127.0.0.1 }   # keycloak
+      - { hostPort: 9090,  containerPort: 30090, listenAddress: 127.0.0.1 }   # prometheus
+      - { hostPort: 16686, containerPort: 30686, listenAddress: 127.0.0.1 }   # jaeger UI
+  - role: worker
+    labels:
+      banking.dev/pool: data      # Postgres and Kafka live here (their volumes are on this node's disk)
+  - role: worker
+    labels:
+      banking.dev/pool: apps

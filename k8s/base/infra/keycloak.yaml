@@ -1,0 +1,80 @@
+# Keycloak: a Deployment (its state lives in Postgres, not on a disk of its own).
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: banking-infra
+  labels: { app.kubernetes.io/name: keycloak }
+spec:
+  selector: { app.kubernetes.io/name: keycloak }
+  ports:
+    - { name: http, port: 8180, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: banking-infra
+  labels: { app.kubernetes.io/name: keycloak }
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two start-dev instances would race to import the realm.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: keycloak }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: keycloak }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.2
+          # start-dev as in Compose (HTTP, no build step). Production: `start` with TLS, an optimized
+          # image (kc.sh build), 2+ replicas with a distributed cache, usually the Keycloak Operator.
+          args: [start-dev, --import-realm]
+          ports:
+            - { name: http, containerPort: 8180 }
+            - { name: management, containerPort: 9000 }
+          env:
+            - { name: KC_DB, value: postgres }
+            - { name: KC_DB_URL, value: "jdbc:postgresql://postgres:5432/keycloak_db" }
+            - { name: KC_DB_USERNAME, value: keycloak_svc }
+            - { name: KC_HTTP_PORT, value: "8180" }
+            # Same fixed public URL as Compose: tokens say iss=http://localhost:8180/realms/banking
+            # whether they were fetched by a browser (via the NodePort) or by a pod (via the Service).
+            - { name: KC_HOSTNAME, value: "http://localhost:8180" }
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            # Part of the Postgres connection budget (see apps/java-config.env); the default is 100.
+            - { name: KC_DB_POOL_MAX_SIZE, value: "10" }
+          envFrom:
+            # Admin bootstrap, DB password, and the values for ${...} placeholders in the realm JSON.
+            - secretRef: { name: keycloak }
+          resources:
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { memory: 1Gi }
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+      volumes:
+        - name: realm
+          configMap: { name: keycloak-realm }

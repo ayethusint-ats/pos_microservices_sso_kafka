@@ -1,0 +1,205 @@
+# Phase 16: zero trust inside the cluster. By default every pod can reach every other pod. Here:
+# deny ALL traffic in and out of the banking namespace, then allow exactly the arrows of the
+# architecture diagram. A connection needs BOTH sides: egress from the caller AND ingress at the callee.
+#
+#   outside ──► api-gateway ──► user / account / payment / transaction / notification
+#   outside ──► frontend               payment ──► account
+#   backends ──► postgres (4 of them), kafka, keycloak, jaeger      gateway ──► keycloak, jaeger
+#   prometheus ──► every Spring pod, port 9000 only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: banking
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Everyone may resolve names (CoreDNS). Without this, default-deny breaks every connection by name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: banking
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# ------------------------------------------------------------------ ingress (who may call me)
+# The two entry points accept connections from anywhere (NodePort / load balancer).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: entry-points
+  namespace: banking
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [api-gateway, frontend] }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 8080, protocol: TCP }
+---
+# The five services: their API ports, from the gateway only (8081-8085: one rule, a port range).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backends-from-gateway
+  namespace: banking
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: backend }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: api-gateway }
+      ports:
+        - { port: 8081, endPort: 8085, protocol: TCP }
+---
+# Service-to-service: payment-service calls account-service's internal API (Phase 10).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: account-from-payment
+  namespace: banking
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: account-service }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: payment-service }
+      ports:
+        - { port: 8082, protocol: TCP }
+---
+# Actuator (port 9000): Prometheus only. This is why Actuator moved to its own port: a NetworkPolicy
+# can't tell /actuator/prometheus from /api/accounts on the same port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-from-prometheus
+  namespace: banking
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [backend, edge] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking-monitoring }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: prometheus }
+      ports:
+        - { port: 9000, protocol: TCP }
+---
+# ------------------------------------------------------------------ egress (whom may I call)
+# Every Spring pod: Keycloak (signing keys; payment-service also gets tokens) and Jaeger (traces).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-to-keycloak-and-jaeger
+  namespace: banking
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [backend, edge] }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking-infra }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: keycloak }
+      ports:
+        - { port: 8180, protocol: TCP }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking-monitoring }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: jaeger }
+      ports:
+        - { port: 4318, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-to-backends
+  namespace: banking
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: api-gateway }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/component: backend }
+      ports:
+        - { port: 8081, endPort: 8085, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backends-to-kafka
+  namespace: banking
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: backend }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking-infra }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: kafka }
+      ports:
+        - { port: 9092, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-owners-to-postgres
+  namespace: banking
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [user-service, account-service, payment-service, transaction-service]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking-infra }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: postgres }
+      ports:
+        - { port: 5432, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-to-account
+  namespace: banking
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: payment-service }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: account-service }
+      ports:
+        - { port: 8082, protocol: TCP }

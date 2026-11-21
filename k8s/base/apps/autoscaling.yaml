@@ -1,0 +1,123 @@
+# Phase 16: elasticity and availability for the two hot paths (every request crosses the gateway,
+# every transfer crosses payment-service). Needs metrics-server (k8s/scripts/up.sh installs it).
+#
+# HPA: desired = ceil(current replicas × current CPU / target CPU), CPU measured against the REQUEST
+# (250m). 70 % leaves headroom while new pods boot (~30 s for a JVM).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway
+  namespace: banking
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api-gateway }
+  minReplicas: 2          # never 1: a single pod is a single point of failure during a rollout or node loss
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0       # react at once to load...
+      policies: [{ type: Pods, value: 2, periodSeconds: 30 }]
+    scaleDown:
+      stabilizationWindowSeconds: 120     # ...but shrink only after 2 calm minutes (no flapping)
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service
+  namespace: banking
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: payment-service }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Pods, value: 2, periodSeconds: 30 }]
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+---
+# PodDisruptionBudget: limits VOLUNTARY disruptions (node drain for an upgrade, cluster autoscaler).
+# "kubectl drain" waits instead of evicting the last available pod. It does NOT protect against a
+# node crash (that's what replicas on different nodes are for).
+# Every Deployment has one (all run 2+ replicas in the base). An overlay that runs 1 replica must delete
+# its PDB: minAvailable 1 with 1 replica = disruptionsAllowed 0 = "kubectl drain" waits forever.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: api-gateway }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payment-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: payment-service }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: frontend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: user-service }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: account-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: account-service }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: transaction-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: transaction-service }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service
+  namespace: banking
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: notification-service }

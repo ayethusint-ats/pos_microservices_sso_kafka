@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: banking-monitoring
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The Prometheus UI (through the NodePort, for you). Locally open; production puts it behind SSO.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+  namespace: banking-monitoring
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: prometheus }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: 9090, protocol: TCP }
+---
+# Traces only from the application namespace; the UI for you.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jaeger
+  namespace: banking-monitoring
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: jaeger }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: banking }
+      ports:
+        - { port: 4318, protocol: TCP }
+    - ports:
+        - { port: 16686, protocol: TCP }

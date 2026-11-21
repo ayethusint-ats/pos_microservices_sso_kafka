@@ -1,0 +1,37 @@
+# Phase 16: the stateful dependencies, in-cluster for local development. In production these are
+# usually managed services (Amazon RDS / Cloud SQL, MSK / Confluent, a hosted IdP): the apps only
+# see host names and secrets, so swapping them changes ConfigMaps, not code.
+#
+# The scripts and the realm come from infrastructure/ (one copy, shared with Compose). Files outside
+# this folder need:  kubectl kustomize --load-restrictor LoadRestrictionsNone  (k8s/scripts/up.sh).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: banking-platform
+      banking.dev/layer: platform     # up.sh applies this layer first and waits for it
+resources:
+  - postgres.yaml
+  - kafka.yaml
+  - keycloak.yaml
+  - network-policies.yaml
+configMapGenerator:
+  # A content hash is appended to the name (postgres-init-7f9c...). Change a file → new name →
+  # the pods referencing it are rolled automatically. No "forgot to restart" config drift.
+  - name: postgres-init
+    namespace: banking-infra
+    files:
+      - ../../../infrastructure/postgres/init/01-create-service-databases.sh
+      - ../../../infrastructure/postgres/init/02-create-keycloak-database.sh
+  - name: keycloak-realm
+    namespace: banking-infra
+    files:
+      - ../../../infrastructure/keycloak/realm/banking-realm.json
+  - name: kafka-topics
+    namespace: banking-infra
+    files:
+      - ../../../infrastructure/kafka/create-topics.sh
+    options:
+      # A Job's pod template is immutable: a new ConfigMap name would make every re-apply fail.
+      # The script is idempotent, so re-running the Job (delete it, re-apply) is how it's updated.
+      disableNameSuffixHash: true

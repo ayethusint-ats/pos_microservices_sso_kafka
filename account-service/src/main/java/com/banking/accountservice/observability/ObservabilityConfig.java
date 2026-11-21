@@ -13,10 +13,16 @@ public class ObservabilityConfig {
      * Found live: every Prometheus scrape (each 15 s) and every health probe became a trace, burying
      * the real ones. /actuator requests get neither a trace nor an http.server.requests metric
      * (scrapes would also distort the latency and request-rate panels).
+     * Phase 16: the same for the Kubernetes probes /livez and /readyz, which are on the API port (found
+     * live: ~2 probe traces per second across the pods).
      */
     @Bean
     ObservationPredicate noActuatorObservations() {
         return (name, context) -> !(context instanceof ServerRequestObservationContext request
-                && request.getCarrier().getRequestURI().startsWith("/actuator"));
+                && isProbeOrActuator(request.getCarrier().getRequestURI()));
+    }
+
+    static boolean isProbeOrActuator(String path) {
+        return path.startsWith("/actuator") || path.equals("/livez") || path.equals("/readyz");
     }
 }

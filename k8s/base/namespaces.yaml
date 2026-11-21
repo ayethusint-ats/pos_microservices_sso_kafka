@@ -1,0 +1,31 @@
+# Phase 16: three namespaces = three trust zones, each with its own NetworkPolicies.
+#   banking             the application (6 Spring Boot services + frontend)
+#   banking-infra       stateful dependencies (Postgres, Kafka, Keycloak)
+#   banking-monitoring  Prometheus, Jaeger
+#
+# Pod Security Admission "restricted" (the strictest built-in profile): the API server REFUSES any pod
+# that could run as root, escalate privileges, keep Linux capabilities or skip the seccomp filter.
+# A misconfigured Deployment fails at `kubectl apply`, not after an incident.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking-infra
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking-monitoring
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
